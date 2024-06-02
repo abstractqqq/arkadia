@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 ndarray = "0.15.6"
 num = "0.4.3"
+
+[dev-dependencies]
+rand = "*"

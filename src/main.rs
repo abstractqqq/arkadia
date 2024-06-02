@@ -17,7 +17,7 @@ fn main() {
     let tree = Kdtree::build(
         matrix.view(),
         matrix.ncols(),
-        1,
+        16,
         0,
         (0..matrix.nrows()).collect(),
     );

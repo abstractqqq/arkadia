@@ -141,7 +141,8 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
             let mut best = Self::compare_points(Some((split_idx, dist)), candidate).unwrap();
             // Since split_idx is not None, we always have a best here
 
-            if best.1 > (point[axis] - split_pt[axis]).abs() {
+            // Square the RHS because the distance in best is squared 
+            if best.1 > (point[axis] - split_pt[axis]).powi(2) {
                 let best2 = self
                     .right
                     .as_ref()
@@ -160,7 +161,8 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
                 .closest_neighbor(point, depth + 1);
             let mut best = Self::compare_points(Some((split_idx, dist)), candidate).unwrap();
 
-            if best.1 > (point[axis] - split_pt[axis]).abs() {
+            // Square the RHS because the distance in best is squared 
+            if best.1 > (point[axis] - split_pt[axis]).powi(2) {
                 let best2 = self
                     .left
                     .as_ref()
@@ -185,7 +187,15 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{arr1, arr2};
+    use ndarray::{arr1, arr2, Array2};
+
+    fn random_2d_rows() -> [f64; 2] {
+        rand::random()
+    }
+
+    fn random_3d_rows() -> [f64; 3] {
+        rand::random()
+    }
 
     #[test]
     fn dim_2_nearest_neighbor() {
@@ -214,5 +224,47 @@ mod tests {
 
         let index = output.unwrap().0;
         assert_eq!(index, 6);
+    }
+
+    #[test]
+    fn dim_3_random_nearest_neighbor() {
+
+        let mut v = Vec::new();
+        let rows = 1000usize;
+        for _ in 0..rows {
+            v.extend_from_slice(&random_3d_rows());
+        }
+
+        let mat = Array2::from_shape_vec((rows, 3), v).unwrap();
+        let point = arr1(&[0.5, 0.5, 0.5]);
+        // brute force test
+        let distances = mat.rows().into_iter().map(|v| {
+            squared_euclidean(v, point.view())
+        }).collect::<Vec<_>>();
+
+        let mut argmin = 0usize;
+        let mut min_dist = f64::MAX;
+        for (i, d) in distances.into_iter().enumerate() {
+            if d < min_dist {
+                min_dist = d;
+                argmin = i;
+            }
+        }
+
+        println!("Distance Brute Force: {}", min_dist);
+
+        let tree = Kdtree::build(
+            mat.view(),
+            mat.ncols(),
+            8,
+            0,
+            (0..mat.nrows()).collect(),
+        );
+
+        let output = tree.closest_neighbor(point.view(), 0);
+        assert!(output.is_some());
+        println!("Distance Kdtree: {}", output.unwrap().1);
+        let index = output.unwrap().0;
+        assert_eq!(argmin, index);
     }
 }
