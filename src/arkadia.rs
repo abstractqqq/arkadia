@@ -1,11 +1,73 @@
 use crate::distances::squared_euclidean;
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use num::Float;
+use dary_heap::QuaternaryHeap;
 
 pub enum KdtreeError {
     EmptyData,
     NonFiniteValue,
 }
+
+
+// Search ID
+// The identification of a point within the Kd-tree during a search. 
+// (index, distance from point)
+pub struct SID<T: Float>{
+    id: usize,
+    dist: T
+}
+
+impl <T:Float> PartialEq for SID<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.dist == other.dist
+    }
+}
+
+impl <T:Float> PartialOrd for SID<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.dist.partial_cmp(&other.dist)
+    }
+}
+
+impl <T:Float> Eq for SID<T> {}
+
+impl <T:Float> Ord for SID<T> {
+    
+    // Unwrap is safe because in all use cases, the data should not contain any non-finite values.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.dist.partial_cmp(&other.dist).unwrap()
+    }
+    
+    fn max(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::max_by(self, other, |a, b| a.dist.partial_cmp(&b.dist).unwrap())
+    }
+    
+    fn min(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::min_by(self, other, |a, b| a.dist.partial_cmp(&b.dist).unwrap())
+    }
+    
+    fn clamp(self, min: Self, max: Self) -> Self
+    where
+        Self: Sized,
+        Self: PartialOrd,
+    {
+        assert!(min <= max);
+        if self.dist < min.dist {
+            min
+        } else if self.dist > max.dist {
+            max
+        } else {
+            self
+        }
+    }
+}
+
 
 pub struct Kdtree<'a, T: Float + 'static> {
     dim: usize,
@@ -75,7 +137,7 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         self.indices.is_some()
     }
 
-    fn best_in_leaf(&self, point: ArrayView1<T>) -> Option<(usize, T)> {
+    fn best_in_leaf(&self, point: ArrayView1<T>) -> Option<SID<T>> {
         // This is only called if we pass is_leaf
         let indices = self.indices.as_ref().unwrap();
         if indices.len() > 0 {
@@ -89,13 +151,26 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
                     min_idx = *i;
                 }
             }
-            Some((min_idx, min_dist))
+            Some(SID{id: min_idx, dist: min_dist})
         } else {
             None
         }
     }
 
-    fn compare_points(p1: Option<(usize, T)>, p2: Option<(usize, T)>) -> Option<(usize, T)> {
+    fn best_k_in_leaf(&self, k:usize, point:ArrayView1<T>) -> Option<QuaternaryHeap<SID<T>>> {
+
+        let indices = self.indices.as_ref().unwrap();
+        if indices.len() > 0 {
+            let qheap: dary_heap::DaryHeap<SID<T>, 4> = QuaternaryHeap::with_capacity(k);
+
+            todo!()
+
+        } else {
+            None
+        }
+    }
+
+    fn compare_points(p1: Option<SID<T>>, p2: Option<SID<T>>) -> Option<SID<T>> {
         if p1.is_none() {
             return p2;
         }
@@ -107,14 +182,14 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         let p1 = p1.unwrap();
         let p2 = p2.unwrap();
 
-        if p1.1 < p2.1 {
+        if p1.dist < p2.dist {
             Some(p1)
         } else {
             Some(p2)
         }
     }
 
-    pub fn closest_neighbor(&self, point: ArrayView1<T>, depth: usize) -> Option<(usize, T)> {
+    pub fn closest_neighbor(&self, point: ArrayView1<T>, depth: usize) -> Option<SID<T>> {
         if point.len() != self.dim {
             return None;
         }
@@ -138,11 +213,11 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
                 .unwrap()
                 .closest_neighbor(point, depth + 1);
             // This is safe because both candidate and Some((split_idx, dist)) cannot be None
-            let mut best = Self::compare_points(Some((split_idx, dist)), candidate).unwrap();
+            let mut best = Self::compare_points(Some(SID{id: split_idx, dist: dist}), candidate).unwrap();
             // Since split_idx is not None, we always have a best here
 
             // Square the RHS because the distance in best is squared 
-            if best.1 > (point[axis] - split_pt[axis]).powi(2) {
+            if best.dist > (point[axis] - split_pt[axis]).powi(2) {
                 let best2 = self
                     .right
                     .as_ref()
@@ -159,10 +234,10 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
                 .as_ref()
                 .unwrap()
                 .closest_neighbor(point, depth + 1);
-            let mut best = Self::compare_points(Some((split_idx, dist)), candidate).unwrap();
+            let mut best = Self::compare_points(Some(SID{id: split_idx, dist: dist}), candidate).unwrap();
 
             // Square the RHS because the distance in best is squared 
-            if best.1 > (point[axis] - split_pt[axis]).powi(2) {
+            if best.dist > (point[axis] - split_pt[axis]).powi(2) {
                 let best2 = self
                     .left
                     .as_ref()
@@ -222,7 +297,7 @@ mod tests {
 
         assert!(output.is_some());
 
-        let index = output.unwrap().0;
+        let index = output.unwrap().id;
         assert_eq!(index, 6);
     }
 
@@ -263,8 +338,10 @@ mod tests {
 
         let output = tree.closest_neighbor(point.view(), 0);
         assert!(output.is_some());
-        println!("Distance Kdtree: {}", output.unwrap().1);
-        let index = output.unwrap().0;
+        let output = output.unwrap();
+        let index = output.id;
+        let dist = output.dist;
+        println!("Distance Kdtree: {}", dist);
         assert_eq!(argmin, index);
     }
 }
