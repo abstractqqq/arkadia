@@ -15,7 +15,7 @@ fn main() {
     let k = 10usize;
     let mut v = Vec::new();
     let rows = 5_000usize;
-    let dim = 20;
+    let dim = 10;
     for _ in 0..rows {
         let data = (0..dim).map(|_| rand::random()).collect::<Vec<_>>();
         v.extend_from_slice(&data);
@@ -46,7 +46,7 @@ fn main() {
     let tree = Kdtree::build(
         mat.view(),
         mat.ncols(),
-        32,
+        64,
         0,
         indices,
     );

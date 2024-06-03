@@ -9,6 +9,7 @@ pub fn squared_euclidean<T: Float + 'static>(a: ArrayView1<T>, b: ArrayView1<T>)
 
 }
 
+
 pub fn linf_dist<T: Float + 'static>(a: ArrayView1<T>, b: ArrayView1<T>) -> T {
 
     a.into_iter()

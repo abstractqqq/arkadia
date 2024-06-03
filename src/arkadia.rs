@@ -84,8 +84,10 @@ pub struct Kdtree<'a, T: Float + 'static> {
 }
 
 impl<'a, T: Float + 'static> Kdtree<'a, T> {
+
+
     pub fn build(
-        data: ArrayView2<'a, T>,
+        data: ArrayView2<'a, T>, // each row in data will be called either a row or y
         dim: usize,
         capacity: usize,
         depth: usize,
@@ -127,10 +129,15 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
                     right,
                 ))),
                 split_idx: Some(split_idx),
+
                 indices: None,
                 data: data,
             }
         }
+    }
+
+    fn compute_row_norms(&self) -> Vec<T> {
+        self.data.rows().into_iter().map(|y| y.dot(&y)).collect()
     }
 
     fn is_leaf(&self) -> bool {
@@ -170,8 +177,8 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
     fn update_top_k(mut top_k: Vec<SID<T>>, k:usize, sid: SID<T>) -> Vec<SID<T>> {
         let idx = top_k.partition_point(|s| *s < sid);
         if idx < top_k.len() {
-            if  top_k.len() + 1 > k { 
-                // already k elements, pop one first. This ensures top_k has k elements and no need to allocate
+            if top_k.len() + 1 > k {
+                // This ensures top_k has k elements and no need to allocate
                 top_k.pop();
             }
             top_k.insert(idx, sid);
@@ -183,10 +190,31 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
     }
 
     #[inline]
-    fn best_k_in_leaf(&self, mut top_k: Vec<SID<T>>, k:usize, point:ArrayView1<T>) -> Vec<SID<T>> {
+    fn best_k_in_leaf(
+        &self, 
+        mut top_k: Vec<SID<T>>, 
+        k:usize, 
+        point:ArrayView1<T>,
+        point_norm_cache: T,
+    ) -> Vec<SID<T>> {
         // This is only called if is_leaf. Safe to unwrap.
         for i in self.indices.unwrap().iter().cloned() {
-            top_k = Self::update_top_k(top_k, k, self.get_sid(i, point));
+            let y = self.data.row(i);
+            let dot_product = y.dot(&point);
+            // Can further reduce this computation but need to be more careful.
+            // This reduction only works when running multiple queries at once and may not work well with
+            // multithreading. Not implemented yet.
+            let y_norm = y.dot(&y);
+            // This hack actually produces faster Euclidean dist calculation.
+            let dist = point_norm_cache + y_norm - dot_product - dot_product;
+            
+            let p = SID{id: i, dist: dist};
+            if let Some(cur_last) = top_k.last() {
+                if cur_last.dist <= p.dist && top_k.len() >= k {
+                    continue; // No need to check if we already have k elements and the dist is >= current max dist
+                }
+            }
+            top_k = Self::update_top_k(top_k, k, p);
         }
         top_k
     }
@@ -264,7 +292,14 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         {
             None
         } else {
-            Some(self.k_nearest_neighbors_unchecked(Vec::with_capacity(k), k, point, 0))
+            let point_norm = point.dot(&point);
+            Some(self.k_nearest_neighbors_unchecked(
+                Vec::with_capacity(k), 
+                k, 
+                point, 
+                0,
+                point_norm,
+            ))
         }
     }
 
@@ -274,11 +309,12 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         mut candidate:Vec<SID<T>>, 
         k:usize, 
         point: ArrayView1<T>, 
-        depth: usize
+        depth: usize,
+        point_norm_cache: T,
     ) -> Vec<SID<T>> {
 
         if self.is_leaf() {
-            return self.best_k_in_leaf(candidate, k, point)
+            return self.best_k_in_leaf(candidate, k, point, point_norm_cache)
         }
 
         let axis = depth % self.dim;
@@ -299,13 +335,13 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
             )
         };
 
-        candidate = next.k_nearest_neighbors_unchecked(candidate, k, point, depth + 1);
+        candidate = next.k_nearest_neighbors_unchecked(candidate, k, point, depth + 1, point_norm_cache);
         let curret_max_dist = candidate.last().map(|x| x.dist).unwrap_or(T::max_value());
         let perpendicular_dist = (point[axis] - split_pt[axis]).powi(2);
         // If current_max_dist > perpendicular_dist, then
         // there is a chance we need to update candidate from opposite branch
         if curret_max_dist > perpendicular_dist {
-            candidate = oppo.k_nearest_neighbors_unchecked(candidate, k, point, depth + 1);
+            candidate = oppo.k_nearest_neighbors_unchecked(candidate, k, point, depth + 1, point_norm_cache);
         }
         candidate
     }
