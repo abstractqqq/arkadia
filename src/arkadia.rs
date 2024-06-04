@@ -74,8 +74,8 @@ pub struct Kdtree<'a, T: Float + 'static> {
     // capacity of leaf node
     capacity: usize,
     // Nodes
-    left: Option<Box<Self>>,
-    right: Option<Box<Self>>,
+    left: Option<Box<Kdtree<'a, T>>>,
+    right: Option<Box<Kdtree<'a, T>>>,
     // Is a leaf node if this has values
     split_idx: Option<usize>,
     indices: Option<&'a [usize]>, // if leaf, this is always Some. But this can be empty.
@@ -84,7 +84,6 @@ pub struct Kdtree<'a, T: Float + 'static> {
 }
 
 impl<'a, T: Float + 'static> Kdtree<'a, T> {
-
 
     pub fn build(
         data: ArrayView2<'a, T>, // each row in data will be called either a row or y
@@ -129,7 +128,6 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
                     right,
                 ))),
                 split_idx: Some(split_idx),
-
                 indices: None,
                 data: data,
             }
@@ -138,6 +136,15 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
 
     fn compute_row_norms(&self) -> Vec<T> {
         self.data.rows().into_iter().map(|y| y.dot(&y)).collect()
+    }
+
+    fn initial_indices(&self) -> Vec<usize> {
+        self.data.rows()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, row)| row.iter().any(|x| !x.is_finite()))
+        .map(|(i, _)| i)
+        .collect()
     }
 
     fn is_leaf(&self) -> bool {
@@ -152,35 +159,14 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         }
     }
 
-    fn best_in_leaf(&self, point: ArrayView1<T>) -> Option<SID<T>> {
-        // This is only called if is_leaf. Safe to unwrap.
-        let indices = self.indices.unwrap();
-        if indices.len() > 0 {
-            let mut min_dist: T = T::max_value();
-            let mut min_idx: usize = 0;
-            for i in indices.iter().cloned() {
-                let test = self.data.row(i);
-                let dist = squared_euclidean(test, point);
-                if dist < min_dist {
-                    min_dist = dist;
-                    min_idx = i;
-                }
-            }
-            Some(SID{id: min_idx, dist: min_dist})
-        } else {
-            None
-        }
-    }
-
     /// Updates the current top K with the incoming SID
-    #[inline]
+    #[inline(always)]
     fn update_top_k(mut top_k: Vec<SID<T>>, k:usize, sid: SID<T>) -> Vec<SID<T>> {
-        let idx = top_k.partition_point(|s| *s < sid);
-        if idx < top_k.len() {
+        let idx = top_k.partition_point(|s| s < &sid);
+        if idx < top_k.len() { 
             if top_k.len() + 1 > k {
-                // This ensures top_k has k elements and no need to allocate
                 top_k.pop();
-            }
+            } // This ensures top_k has k elements and no need to allocate
             top_k.insert(idx, sid);
         } else if idx < k {
             // This case is true if and only if (top_k.len() <= idx < k)
@@ -189,7 +175,7 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         top_k
     }
 
-    #[inline]
+    #[inline(always)]
     fn best_k_in_leaf(
         &self, 
         mut top_k: Vec<SID<T>>, 
@@ -219,67 +205,6 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         top_k
     }
 
-    fn compare_points(p1: Option<SID<T>>, p2: Option<SID<T>>) -> Option<SID<T>> {
-        if p1.is_none() {
-            return p2;
-        }
-
-        if p2.is_none() {
-            return p1;
-        }
-
-        let p1 = p1.unwrap();
-        let p2 = p2.unwrap();
-
-        if p1 < p2 {
-            Some(p1)
-        } else {
-            Some(p2)
-        }
-    }
-
-    pub fn nearest_neighbor(&self, point: ArrayView1<T>, depth: usize) -> Option<SID<T>> {
-        if point.len() != self.dim {
-            return None;
-        }
-
-        if self.is_leaf() {
-            return self.best_in_leaf(point);
-        }
-
-        let axis = depth % self.dim;
-
-        // Must exist
-        let split_idx = self.split_idx.unwrap();
-        let split_pt = self.data.row(split_idx);
-        let dist = squared_euclidean(point, split_pt);
-
-        let (next, oppo) = if point[axis] < split_pt[axis] {
-            // Next = Self.left, opposite = self.right
-            (
-                self.left.as_ref().unwrap(),
-                self.right.as_ref().unwrap(),
-            )
-        } else {
-            (
-                self.right.as_ref().unwrap(),
-                self.left.as_ref().unwrap(),
-            )
-        };
-
-        let candidate = next.nearest_neighbor(point, depth + 1);
-        // This is safe because both candidate and Some((split_idx, dist)) cannot be None
-        let mut best = Self::compare_points(Some(SID{id: split_idx, dist: dist}), candidate).unwrap();
-        // Since split_idx is not None, we always have a best here
-        // Square the RHS because the distance in best is squared 
-        if best.dist > (point[axis] - split_pt[axis]).powi(2) {
-            let best2 = oppo.nearest_neighbor(point, depth + 1);
-            best = Self::compare_points(Some(best), best2).unwrap();
-        }
-
-        Some(best)
-    }
-
     pub fn k_nearest_neighbors(
         &self, 
         k:usize, 
@@ -303,7 +228,7 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn k_nearest_neighbors_unchecked(
         &self, 
         mut candidate:Vec<SID<T>>, 
@@ -360,84 +285,6 @@ mod tests {
     fn random_3d_rows() -> [f64; 3] {
         rand::random()
     }
-
-    #[test]
-    fn dim_2_nearest_neighbor() {
-        let mat = arr2(&[
-            [4.0, 7.0],
-            [7.0, 13.0],
-            [9.0, 4.0],
-            [11.0, 10.0],
-            [16.0, 10.0],
-            [15.0, 3.0],
-            [14.0, 11.0],
-        ]);
-        
-        let mut indices = (0..mat.nrows()).collect::<Vec<usize>>();
-        let indices = indices.as_mut_slice();
-        let tree = Kdtree::build(
-            mat.view(),
-            mat.ncols(),
-            1,
-            0,
-            indices,
-        );
-
-        let pt = arr1(&[14.0, 9.0]);
-        let output = tree.nearest_neighbor(pt.view(), 0);
-
-        assert!(output.is_some());
-
-        let index = output.unwrap().id;
-        assert_eq!(index, 6);
-    }
-
-    #[test]
-    fn dim_3_random_nearest_neighbor() {
-
-        let mut v = Vec::new();
-        let rows = 1000usize;
-        for _ in 0..rows {
-            v.extend_from_slice(&random_3d_rows());
-        }
-
-        let mat = Array2::from_shape_vec((rows, 3), v).unwrap();
-        let point = arr1(&[0.5, 0.5, 0.5]);
-        // brute force test
-        let distances = mat.rows().into_iter().map(|v| {
-            squared_euclidean(v, point.view())
-        }).collect::<Vec<_>>();
-
-        let mut argmin = 0usize;
-        let mut min_dist = f64::MAX;
-        for (i, d) in distances.into_iter().enumerate() {
-            if d < min_dist {
-                min_dist = d;
-                argmin = i;
-            }
-        }
-
-        println!("Distance Brute Force: {}", min_dist);
-
-        let mut indices = (0..mat.nrows()).collect::<Vec<usize>>();
-        let indices = indices.as_mut_slice();
-        let tree = Kdtree::build(
-            mat.view(),
-            mat.ncols(),
-            8,
-            0,
-            indices,
-        );
-
-        let output = tree.nearest_neighbor(point.view(), 0);
-        assert!(output.is_some());
-        let output = output.unwrap();
-        let index = output.id;
-        let dist = output.dist;
-        println!("Distance Kdtree: {}", dist);
-        assert_eq!(argmin, index);
-    }
-
 
     #[test]
     fn test_10d_knn() {
