@@ -1,7 +1,7 @@
 mod arkadia;
 mod distances;
 
-use arkadia::Kdtree;
+use arkadia::{Kdtree, LeafElement};
 use ndarray::prelude::*;
 
 use kdtree::KdTree as kd;
@@ -44,28 +44,39 @@ fn main() {
 
     let now = Instant::now();
 
-    let mut indices = (0..mat.nrows()).collect::<Vec<usize>>();
-    let indices = indices.as_mut_slice();
+    let mut data = 
+        mat
+        .rows()
+        .into_iter()
+        .enumerate()
+        .map(|(i, arr)| LeafElement{ data: i, row_vec: arr})
+        .collect::<Vec<_>>();
     let tree = Kdtree::build(
-        mat.view(),
+        &mut data,
         mat.ncols(),
         64,
         0,
-        indices,
     );
 
     let _ = tree.k_nearest_neighbors(k, point.view());
     let elapsed = now.elapsed();
-    println!("Kdtree total time spent: {}s", elapsed.as_secs_f32());
+    println!("My Kdtree total time spent: {}s", elapsed.as_secs_f32());
 
     let now = Instant::now();
     let output = tree.k_nearest_neighbors(k, point.view());
     let elapsed = now.elapsed();
-    println!("Kdtree 1 query time spent: {}s", elapsed.as_secs_f32());
+    println!("My Kdtree 1 query time spent: {}s", elapsed.as_secs_f32());
+
+    let now = Instant::now();
+    for _ in 0..100 {
+        let output = tree.k_nearest_neighbors(k, point.view());
+    }
+    let elapsed = now.elapsed();
+    println!("My Kdtree 100 query time spent: {}s", elapsed.as_secs_f32());
 
     assert!(output.is_some());
     let output = output.unwrap();
-    let indices = output.iter().map(|sid| sid.id).collect::<Vec<_>>();
+    let indices = output.iter().map(|sid| sid.data).collect::<Vec<_>>();
     let distances = output.iter().map(|sid| sid.dist).collect::<Vec<_>>();
 
     println!("{:?}", indices);
@@ -87,6 +98,13 @@ fn main() {
     let output = kd.nearest(point_slice, k, &kdtree::distance::squared_euclidean);
     let elapsed = now.elapsed();
     println!("Kdtree package 1 query time spent: {}s", elapsed.as_secs_f32());
+
+    let now = Instant::now();
+    for _ in 0..100 {
+        let output = kd.nearest(point_slice, k, &kdtree::distance::squared_euclidean);
+    }
+    let elapsed = now.elapsed();
+    println!("Kdtree package 100 query time spent: {}s", elapsed.as_secs_f32());
 
     let output = output.unwrap();
     let indices = output.iter().map(|t| t.1).collect::<Vec<_>>();

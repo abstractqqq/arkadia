@@ -2,36 +2,38 @@ use crate::distances::{squared_euclidean};
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use num::Float;
 
-
 pub enum KdtreeError {
     EmptyData,
     NonFiniteValue,
 }
 
-// Search ID
-// The identification of a point within the Kd-tree during a search. 
-// (index, distance from point)
-#[derive(Debug)]
-pub struct SID<T: Float>{
-    pub id: usize,
+pub struct LeafElement<'a, T:Float, A> {
+    pub data: A, 
+    pub row_vec: ArrayView1<'a, T>
+}
+
+// Search Result
+// (Data, and distance)
+pub struct SR<T:Float, A>{
+    pub data: A ,
     pub dist: T
 }
 
-impl <T:Float> PartialEq for SID<T> {
+impl <T: Float, A> PartialEq for SR<T, A> {
     fn eq(&self, other: &Self) -> bool {
         self.dist == other.dist
     }
 }
 
-impl <T:Float> PartialOrd for SID<T> {
+impl <T: Float, A> PartialOrd for SR<T, A> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.dist.partial_cmp(&other.dist)
     }
 }
 
-impl <T:Float> Eq for SID<T> {}
+impl <T: Float, A> Eq for SR<T, A> {}
 
-impl <T:Float> Ord for SID<T> {
+impl <T: Float, A> Ord for SR<T, A> {
     
     // Unwrap is safe because in all use cases, the data should not contain any non-finite values.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -68,109 +70,90 @@ impl <T:Float> Ord for SID<T> {
     }
 }
 
-
-pub struct Kdtree<'a, T: Float + 'static> {
+pub struct Kdtree<'a, T: Float + 'static, A> {
     dim: usize,
     // capacity of leaf node
     capacity: usize,
     // Nodes
-    left: Option<Box<Kdtree<'a, T>>>,
-    right: Option<Box<Kdtree<'a, T>>>,
+    left: Option<Box<Kdtree<'a, T, A>>>,
+    right: Option<Box<Kdtree<'a, T, A>>>,
     // Is a leaf node if this has values
-    split_idx: Option<usize>,
-    indices: Option<&'a [usize]>, // if leaf, this is always Some. But this can be empty.
+    split_axis_value: Option<T>,
     // Data
-    data: ArrayView2<'a, T>,
+    data: Option<&'a [LeafElement<'a, T, A>]> // Not none when this is a leaf
 }
 
-impl<'a, T: Float + 'static> Kdtree<'a, T> {
+impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
 
     pub fn build(
-        data: ArrayView2<'a, T>, // each row in data will be called either a row or y
+        data: &'a mut [LeafElement<'a, T, A>],
         dim: usize,
         capacity: usize,
         depth: usize,
-        indices: &'a mut [usize],
-    ) -> Kdtree<'a, T> {
-        let n = indices.len();
+    ) -> Self {
+        let n = data.len();
         if n <= capacity {
             Kdtree {
                 dim: dim,
                 capacity: capacity,
                 left: None,
                 right: None,
-                split_idx: None,
-                indices: Some(indices),
-                data: data,
+                split_axis_value: None,
+                data: Some(data),
             }
         } else {
+
             let axis = depth % dim;
             let half = n >> 1;
-            let column = data.column(axis);
-            indices.sort_unstable_by(|&i, &j| column[i].partial_cmp(&column[j]).unwrap());
-            let split_idx = indices[half];
-            let (left, right) = indices.split_at_mut(half);
+            let mut min = T::max_value();
+            let mut max = T::min_value();
+            for elem in data.iter() {
+                min = min.min(elem.row_vec[axis]);
+                max = max.max(elem.row_vec[axis]);
+            }
+            let midpoint = min + (max - min) / T::from(2.0).unwrap();
+            data.sort_unstable_by(
+                |l1, l2| 
+                (l1.row_vec[axis] < midpoint).cmp(&(l2.row_vec[axis] < midpoint))
+            );
+            let (left, right) = data.split_at_mut(half);
             Kdtree {
                 dim: dim,
                 capacity: capacity,
                 left: Some(Box::new(Self::build(
-                    data,
+                    left,
                     dim,
                     capacity,
-                    depth + 1,
-                    left,
+                    depth + 1
                 ))),
                 right: Some(Box::new(Self::build(
-                    data,
+                    right,
                     dim,
                     capacity,
-                    depth + 1,
-                    right,
+                    depth + 1
                 ))),
-                split_idx: Some(split_idx),
-                indices: None,
-                data: data,
+                split_axis_value: Some(midpoint),
+                data: None,
             }
         }
     }
 
-    fn compute_row_norms(&self) -> Vec<T> {
-        self.data.rows().into_iter().map(|y| y.dot(&y)).collect()
-    }
-
-    fn initial_indices(&self) -> Vec<usize> {
-        self.data.rows()
-        .into_iter()
-        .enumerate()
-        .filter(|(_, row)| row.iter().any(|x| !x.is_finite()))
-        .map(|(i, _)| i)
-        .collect()
-    }
-
     fn is_leaf(&self) -> bool {
-        self.indices.is_some()
+        self.data.is_some()
     }
 
-    #[inline]
-    fn get_sid(&self, i:usize, point: ArrayView1<T>) -> SID<T> {
-        SID {
-            id: i,
-            dist: squared_euclidean(point, self.data.row(i))
-        }
-    }
-
-    /// Updates the current top K with the incoming SID
+    /// Updates the current top K with the incoming SR
     #[inline(always)]
-    fn update_top_k(mut top_k: Vec<SID<T>>, k:usize, sid: SID<T>) -> Vec<SID<T>> {
-        let idx = top_k.partition_point(|s| s < &sid);
+    fn update_top_k(mut top_k: Vec<SR<T, A>>, k:usize, sr: SR<T, A>) -> Vec<SR<T, A>> {
+        let idx = top_k.partition_point(|s| s < &sr);
         if idx < top_k.len() { 
             if top_k.len() + 1 > k {
                 top_k.pop();
             } // This ensures top_k has k elements and no need to allocate
-            top_k.insert(idx, sid);
+            top_k.insert(idx, sr);
         } else if idx < k {
             // This case is true if and only if (top_k.len() <= idx < k)
-            top_k.push(sid); // by the end of the push, len is at most k.
+            top_k.push(sr); // by the end of the push, len is at most k.
         } // Do nothing if idx >= k, because that means no partition point was found within existing values
         top_k
     }
@@ -178,29 +161,33 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
     #[inline(always)]
     fn best_k_in_leaf(
         &self, 
-        mut top_k: Vec<SID<T>>, 
+        mut top_k: Vec<SR<T, A>>, 
         k:usize, 
         point:ArrayView1<T>,
         point_norm_cache: T,
-    ) -> Vec<SID<T>> {
+    ) -> Vec<SR<T, A>> {
         // This is only called if is_leaf. Safe to unwrap.
-        for i in self.indices.unwrap().iter().cloned() {
-            let y = self.data.row(i);
+        for element in self.data.unwrap().iter() {
+            let y = element.row_vec;
+
+            let is_full = top_k.len() >= k;
+            let cur_max_dist = top_k.last().map(|sr: &SR<T, A>| sr.dist).unwrap_or(T::max_value());
             let dot_product = y.dot(&point);
-            // Can further reduce this computation but need to be more careful.
-            // This reduction only works when running multiple queries at once and may not work well with
-            // multithreading. Not implemented yet.
+            let two_times_dp = dot_product + dot_product;
             let y_norm = y.dot(&y);
-            // This hack actually produces faster Euclidean dist calculation.
-            let dist = point_norm_cache + y_norm - dot_product - dot_product;
-            
-            let p = SID{id: i, dist: dist};
-            if let Some(cur_last) = top_k.last() {
-                if cur_last.dist <= p.dist && top_k.len() >= k {
-                    continue; // No need to check if we already have k elements and the dist is >= current max dist
-                }
+            // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
+            let dist = point_norm_cache + y_norm - two_times_dp;
+            if cur_max_dist <= dist && is_full {
+                continue; // No need to check if we already have k elements and the dist is >= current max dist
             }
-            top_k = Self::update_top_k(top_k, k, p);
+            top_k = Self::update_top_k(
+                top_k, 
+                k, 
+                SR {
+                    data: element.data,
+                    dist:dist
+                }
+            );
         }
         top_k
     }
@@ -209,7 +196,7 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
         &self, 
         k:usize, 
         point:ArrayView1<T>,
-    ) -> Option<Vec<SID<T>>> {
+    ) -> Option<Vec<SR<T, A>>> {
 
         if k == 0 
             || (point.len() != self.dim) 
@@ -231,24 +218,28 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
     #[inline(always)]
     pub fn k_nearest_neighbors_unchecked(
         &self, 
-        mut candidate:Vec<SID<T>>, 
+        mut candidate:Vec<SR<T, A>>, 
         k:usize, 
         point: ArrayView1<T>, 
         depth: usize,
         point_norm_cache: T,
-    ) -> Vec<SID<T>> {
-
+    ) -> Vec<SR<T, A>> {
+        
+        let axis = depth % self.dim;
         if self.is_leaf() {
-            return self.best_k_in_leaf(candidate, k, point, point_norm_cache)
+            return self.best_k_in_leaf(
+                candidate, 
+                k, 
+                point, 
+                point_norm_cache
+            )
         }
 
-        let axis = depth % self.dim;
-
         // Must exist
-        let split_idx = self.split_idx.unwrap();
-        let split_pt = self.data.row(split_idx);
+        let axis_value = self.split_axis_value.unwrap();
+        let cur_max_dist = candidate.last().map(|s| s.dist).unwrap_or(T::max_value());
 
-        let (next, oppo) = if point[axis] < split_pt[axis] {
+        let (next, oppo) = if point[axis] < axis_value {
             ( // Next = Self.left, opposite = self.right
                 self.left.as_ref().unwrap(),
                 self.right.as_ref().unwrap(),
@@ -260,13 +251,25 @@ impl<'a, T: Float + 'static> Kdtree<'a, T> {
             )
         };
 
-        candidate = next.k_nearest_neighbors_unchecked(candidate, k, point, depth + 1, point_norm_cache);
-        let curret_max_dist = candidate.last().map(|x| x.dist).unwrap_or(T::max_value());
-        let perpendicular_dist = (point[axis] - split_pt[axis]).powi(2);
+        candidate = next.k_nearest_neighbors_unchecked(
+            candidate, 
+            k, 
+            point, 
+            depth + 1, 
+            point_norm_cache
+        );
+
+        let perp_dist = (point[axis] - axis_value).powi(2);
         // If current_max_dist > perpendicular_dist, then
         // there is a chance we need to update candidate from opposite branch
-        if curret_max_dist > perpendicular_dist {
-            candidate = oppo.k_nearest_neighbors_unchecked(candidate, k, point, depth + 1, point_norm_cache);
+        if cur_max_dist > perp_dist {
+            candidate = oppo.k_nearest_neighbors_unchecked(
+                candidate, 
+                k, 
+                point, 
+                depth + 1, 
+                point_norm_cache
+            );
         }
         candidate
     }
@@ -308,22 +311,27 @@ mod tests {
         ans_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
     
 
-        let mut indices = (0..mat.nrows()).collect::<Vec<usize>>();
-        let indices = indices.as_mut_slice();
+        let mut data = 
+            mat
+            .rows()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, arr)| arr.iter().all(|x| x.is_finite()))
+            .map(|(i, arr)| LeafElement{ data: i, row_vec: arr})
+            .collect::<Vec<_>>();
         let tree = Kdtree::build(
-            mat.view(),
+            &mut data,
             mat.ncols(),
             32,
             0,
-            indices,
         );
     
         let output = tree.k_nearest_neighbors(k, point.view());
     
         assert!(output.is_some());
         let output = output.unwrap();
-        let indices = output.iter().map(|sid| sid.id).collect::<Vec<_>>();
-        let distances = output.iter().map(|sid| sid.dist).collect::<Vec<_>>();
+        let indices = output.iter().map(|sr| sr.data).collect::<Vec<_>>();
+        let distances = output.iter().map(|sr| sr.dist).collect::<Vec<_>>();
     
         assert_eq!(&ans_argmins[..k], &indices);
         assert_eq!(&ans_distances[..k], &distances);
