@@ -14,26 +14,26 @@ pub struct LeafElement<'a, T:Float, A> {
 
 // Search Result
 // (Data, and distance)
-pub struct SR<T:Float, A>{
+pub struct NB<T:Float, A>{
     pub data: A ,
     pub dist: T
 }
 
-impl <T: Float, A> PartialEq for SR<T, A> {
+impl <T: Float, A> PartialEq for NB<T, A> {
     fn eq(&self, other: &Self) -> bool {
         self.dist == other.dist
     }
 }
 
-impl <T: Float, A> PartialOrd for SR<T, A> {
+impl <T: Float, A> PartialOrd for NB<T, A> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.dist.partial_cmp(&other.dist)
     }
 }
 
-impl <T: Float, A> Eq for SR<T, A> {}
+impl <T: Float, A> Eq for NB<T, A> {}
 
-impl <T: Float, A> Ord for SR<T, A> {
+impl <T: Float, A> Ord for NB<T, A> {
     
     // Unwrap is safe because in all use cases, the data should not contain any non-finite values.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -104,19 +104,24 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         } else {
 
             let axis = depth % dim;
-            let half = n >> 1;
+            // let half = n >> 1;
+
             let mut min = T::max_value();
             let mut max = T::min_value();
             for elem in data.iter() {
                 min = min.min(elem.row_vec[axis]);
                 max = max.max(elem.row_vec[axis]);
             }
-            let midpoint = min + (max - min) / T::from(2.0).unwrap();
+            let midpoint = min + (max - min) / (T::one() + T::one());
             data.sort_unstable_by(
                 |l1, l2| 
-                (l1.row_vec[axis] < midpoint).cmp(&(l2.row_vec[axis] < midpoint))
-            );
-            let (left, right) = data.split_at_mut(half);
+                (l1.row_vec[axis] >= midpoint).cmp(&(l2.row_vec[axis] >= midpoint))
+            ); // False <<< True. Now split by the first True location
+
+            let split_idx = data.partition_point(
+                |elem| elem.row_vec[axis] < midpoint
+            ); // first index of True. If it doesn't exist, all points goes into left
+            let (left, right) = data.split_at_mut(split_idx);
             Kdtree {
                 dim: dim,
                 capacity: capacity,
@@ -142,18 +147,18 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         self.data.is_some()
     }
 
-    /// Updates the current top K with the incoming SR
+    /// Updates the current top K with the incoming nb
     #[inline(always)]
-    fn update_top_k(mut top_k: Vec<SR<T, A>>, k:usize, sr: SR<T, A>) -> Vec<SR<T, A>> {
-        let idx = top_k.partition_point(|s| s < &sr);
+    fn update_top_k(mut top_k: Vec<NB<T, A>>, k:usize, nb: NB<T, A>) -> Vec<NB<T, A>> {
+        let idx: usize = top_k.partition_point(|s| s <= &nb);
         if idx < top_k.len() { 
             if top_k.len() + 1 > k {
                 top_k.pop();
             } // This ensures top_k has k elements and no need to allocate
-            top_k.insert(idx, sr);
-        } else if idx < k {
-            // This case is true if and only if (top_k.len() <= idx < k)
-            top_k.push(sr); // by the end of the push, len is at most k.
+            top_k.insert(idx, nb);
+        } else if top_k.len() < k {
+            // Note if idx < top_k.len() is false, then index == top_k.len()! No need to check this.
+            top_k.push(nb); // by the end of the push, len is at most k.
         } // Do nothing if idx >= k, because that means no partition point was found within existing values
         top_k
     }
@@ -161,29 +166,26 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     #[inline(always)]
     fn best_k_in_leaf(
         &self, 
-        mut top_k: Vec<SR<T, A>>, 
+        mut top_k: Vec<NB<T, A>>, 
         k:usize, 
         point:ArrayView1<T>,
         point_norm_cache: T,
-    ) -> Vec<SR<T, A>> {
+    ) -> Vec<NB<T, A>> {
         // This is only called if is_leaf. Safe to unwrap.
         for element in self.data.unwrap().iter() {
+            let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(T::max_value());
             let y = element.row_vec;
-
-            let is_full = top_k.len() >= k;
-            let cur_max_dist = top_k.last().map(|sr: &SR<T, A>| sr.dist).unwrap_or(T::max_value());
-            let dot_product = y.dot(&point);
-            let two_times_dp = dot_product + dot_product;
-            let y_norm = y.dot(&y);
             // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
-            let dist = point_norm_cache + y_norm - two_times_dp;
-            if cur_max_dist <= dist && is_full {
+            let dot_product = y.dot(&point);
+            let y_norm = y.dot(&y);
+            let dist = point_norm_cache + y_norm - dot_product - dot_product;
+            if cur_max_dist <= dist && top_k.len() >= k {
                 continue; // No need to check if we already have k elements and the dist is >= current max dist
             }
             top_k = Self::update_top_k(
                 top_k, 
                 k, 
-                SR {
+                NB {
                     data: element.data,
                     dist:dist
                 }
@@ -192,11 +194,11 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         top_k
     }
 
-    pub fn k_nearest_neighbors(
+    pub fn knn(
         &self, 
         k:usize, 
         point:ArrayView1<T>,
-    ) -> Option<Vec<SR<T, A>>> {
+    ) -> Option<Vec<NB<T, A>>> {
 
         if k == 0 
             || (point.len() != self.dim) 
@@ -205,7 +207,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             None
         } else {
             let point_norm = point.dot(&point);
-            Some(self.k_nearest_neighbors_unchecked(
+            Some(self.knn_unchecked(
                 Vec::with_capacity(k), 
                 k, 
                 point, 
@@ -216,29 +218,28 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     }
 
     #[inline(always)]
-    pub fn k_nearest_neighbors_unchecked(
+    pub fn knn_unchecked(
         &self, 
-        mut candidate:Vec<SR<T, A>>, 
+        mut candidate:Vec<NB<T, A>>, 
         k:usize, 
         point: ArrayView1<T>, 
         depth: usize,
         point_norm_cache: T,
-    ) -> Vec<SR<T, A>> {
+    ) -> Vec<NB<T, A>> {
         
         let axis = depth % self.dim;
         if self.is_leaf() {
             return self.best_k_in_leaf(
                 candidate, 
                 k, 
-                point, 
+                point,
                 point_norm_cache
             )
         }
-
+        
         // Must exist
         let axis_value = self.split_axis_value.unwrap();
-        let cur_max_dist = candidate.last().map(|s| s.dist).unwrap_or(T::max_value());
-
+        
         let (next, oppo) = if point[axis] < axis_value {
             ( // Next = Self.left, opposite = self.right
                 self.left.as_ref().unwrap(),
@@ -250,20 +251,21 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 self.left.as_ref().unwrap(),
             )
         };
-
-        candidate = next.k_nearest_neighbors_unchecked(
+        
+        candidate = next.knn_unchecked(
             candidate, 
             k, 
             point, 
             depth + 1, 
             point_norm_cache
         );
-
+        
+        let cur_max_dist = candidate.last().map(|s| s.dist).unwrap_or(T::max_value());
         let perp_dist = (point[axis] - axis_value).powi(2);
         // If current_max_dist > perpendicular_dist, then
         // there is a chance we need to update candidate from opposite branch
         if cur_max_dist > perp_dist {
-            candidate = oppo.k_nearest_neighbors_unchecked(
+            candidate = oppo.knn_unchecked(
                 candidate, 
                 k, 
                 point, 
@@ -326,15 +328,17 @@ mod tests {
             0,
         );
     
-        let output = tree.k_nearest_neighbors(k, point.view());
+        let output = tree.knn(k, point.view());
     
         assert!(output.is_some());
         let output = output.unwrap();
-        let indices = output.iter().map(|sr| sr.data).collect::<Vec<_>>();
-        let distances = output.iter().map(|sr| sr.dist).collect::<Vec<_>>();
+        let indices = output.iter().map(|nb| nb.data).collect::<Vec<_>>();
+        let distances = output.iter().map(|nb| nb.dist).collect::<Vec<_>>();
     
         assert_eq!(&ans_argmins[..k], &indices);
-        assert_eq!(&ans_distances[..k], &distances);
+        for (d1, d2) in ans_distances[..k].iter().zip(distances.into_iter()) {
+            assert!((d1-d2).abs() < 1e-10);
+        }
 
     }
 

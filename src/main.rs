@@ -14,10 +14,10 @@ fn main() {
 
     use std::time::Instant;
 
-    let k = 10usize;
+    let k: usize = 5usize;
     let mut v = Vec::new();
     let rows = 100_000usize;
-    let dim = 10;
+    let dim = 3;
     for _ in 0..rows {
         let data = (0..dim).map(|_| rand::random()).collect::<Vec<_>>();
         v.extend_from_slice(&data);
@@ -58,26 +58,26 @@ fn main() {
         0,
     );
 
-    let _ = tree.k_nearest_neighbors(k, point.view());
+    let _ = tree.knn(k, point.view());
     let elapsed = now.elapsed();
     println!("My Kdtree total time spent: {}s", elapsed.as_secs_f32());
 
     let now = Instant::now();
-    let output = tree.k_nearest_neighbors(k, point.view());
+    let output = tree.knn(k, point.view());
     let elapsed = now.elapsed();
     println!("My Kdtree 1 query time spent: {}s", elapsed.as_secs_f32());
 
     let now = Instant::now();
     for _ in 0..100 {
-        let output = tree.k_nearest_neighbors(k, point.view());
+        let output = tree.knn(k, point.view());
     }
     let elapsed = now.elapsed();
     println!("My Kdtree 100 query time spent: {}s", elapsed.as_secs_f32());
 
     assert!(output.is_some());
     let output = output.unwrap();
-    let indices = output.iter().map(|sid| sid.data).collect::<Vec<_>>();
-    let distances = output.iter().map(|sid| sid.dist).collect::<Vec<_>>();
+    let indices = output.iter().map(|nb| nb.data).collect::<Vec<_>>();
+    let distances = output.iter().map(|nb| nb.dist).collect::<Vec<_>>();
 
     println!("{:?}", indices);
     println!("{:?}", distances);
