@@ -1,15 +1,12 @@
 use crate::distances::{squared_euclidean};
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use num::Float;
+// use std::collections::BinaryHeap;
+use dary_heap::OctonaryHeap;
 
 pub enum KdtreeError {
     EmptyData,
     NonFiniteValue,
-}
-
-pub struct LeafElement<'a, T:Float, A> {
-    pub data: A, 
-    pub row_vec: ArrayView1<'a, T>
 }
 
 // Search Result
@@ -70,6 +67,12 @@ impl <T: Float, A> Ord for NB<T, A> {
     }
 }
 
+pub struct LeafElement<'a, T:Float, A> {
+    pub data: A, 
+    pub row_vec: &'a [T],
+    pub norm: T,
+}
+
 pub struct Kdtree<'a, T: Float + 'static, A> {
     dim: usize,
     // capacity of leaf node
@@ -79,6 +82,8 @@ pub struct Kdtree<'a, T: Float + 'static, A> {
     right: Option<Box<Kdtree<'a, T, A>>>,
     // Is a leaf node if this has values
     split_axis_value: Option<T>,
+    min_bounds: Option<Vec<T>>,
+    max_bounds: Option<Vec<T>>,
     // Data
     data: Option<&'a [LeafElement<'a, T, A>]> // Not none when this is a leaf
 }
@@ -86,6 +91,20 @@ pub struct Kdtree<'a, T: Float + 'static, A> {
 impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
 
     pub fn build(
+        data: &'a mut [LeafElement<'a, T, A>],
+        dim: usize,
+    ) -> Self {
+        let capacity = if dim < 5 {
+            16usize
+        } else if dim < 13 {
+            64usize
+        } else {
+            128usize
+        };
+        Self::build_unchecked(data, dim, capacity, 0)
+    }
+
+    fn build_unchecked(
         data: &'a mut [LeafElement<'a, T, A>],
         dim: usize,
         capacity: usize,
@@ -99,20 +118,24 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 left: None,
                 right: None,
                 split_axis_value: None,
+                min_bounds: None,
+                max_bounds: None,
                 data: Some(data),
             }
         } else {
-
             let axis = depth % dim;
             // let half = n >> 1;
-
-            let mut min = T::max_value();
-            let mut max = T::min_value();
+            let mut min_bounds = vec![T::max_value(); dim];
+            let mut max_bounds = vec![T::min_value(); dim];
             for elem in data.iter() {
-                min = min.min(elem.row_vec[axis]);
-                max = max.max(elem.row_vec[axis]);
+                for i in 0..dim {
+                    min_bounds[i] = min_bounds[i].min(elem.row_vec[i]);
+                    max_bounds[i] = max_bounds[i].max(elem.row_vec[i]);
+                }
             }
-            let midpoint = min + (max - min) / (T::one() + T::one());
+            let min_axis = min_bounds[axis];
+            let max_axis = max_bounds[axis];
+            let midpoint = min_axis + (max_axis - min_axis) / (T::one() + T::one());
             data.sort_unstable_by(
                 |l1, l2| 
                 (l1.row_vec[axis] >= midpoint).cmp(&(l2.row_vec[axis] >= midpoint))
@@ -125,19 +148,21 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             Kdtree {
                 dim: dim,
                 capacity: capacity,
-                left: Some(Box::new(Self::build(
+                left: Some(Box::new(Self::build_unchecked(
                     left,
                     dim,
                     capacity,
                     depth + 1
                 ))),
-                right: Some(Box::new(Self::build(
+                right: Some(Box::new(Self::build_unchecked(
                     right,
                     dim,
                     capacity,
                     depth + 1
                 ))),
                 split_axis_value: Some(midpoint),
+                min_bounds: Some(min_bounds),
+                max_bounds: Some(max_bounds),
                 data: None,
             }
         }
@@ -145,6 +170,19 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
 
     fn is_leaf(&self) -> bool {
         self.data.is_some()
+    }
+
+    // Create the closest point in the box bounded by oppo to point and its norm
+    fn closest_dist_to_box(min_bounds:&[T], max_bounds:&[T], point: ArrayView1<T>) -> T {
+        let mut dist = T::zero();
+        for i in 0..point.len() {
+            if point[i] > max_bounds[i] {
+                dist = dist + (point[i] - max_bounds[i]).powi(2);
+            } else if point[i] < min_bounds[i] {
+                dist = dist + (point[i] - min_bounds[i]).powi(2);
+            }
+        }
+        dist
     }
 
     /// Updates the current top K with the incoming nb
@@ -157,7 +195,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             } // This ensures top_k has k elements and no need to allocate
             top_k.insert(idx, nb);
         } else if top_k.len() < k {
-            // Note if idx < top_k.len() is false, then index == top_k.len()! No need to check this.
+            // Note if idx < top_k.len() is false, then index == top_k.len() for free!
             top_k.push(nb); // by the end of the push, len is at most k.
         } // Do nothing if idx >= k, because that means no partition point was found within existing values
         top_k
@@ -174,22 +212,22 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         // This is only called if is_leaf. Safe to unwrap.
         for element in self.data.unwrap().iter() {
             let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(T::max_value());
-            let y = element.row_vec;
+            let y = ArrayView1::from(element.row_vec);
             // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
+            
             let dot_product = y.dot(&point);
-            let y_norm = y.dot(&y);
-            let dist = point_norm_cache + y_norm - dot_product - dot_product;
-            if cur_max_dist <= dist && top_k.len() >= k {
-                continue; // No need to check if we already have k elements and the dist is >= current max dist
+            let dist = point_norm_cache + element.norm - dot_product - dot_product;
+            if dist < cur_max_dist || top_k.len() < k {
+                top_k = Self::update_top_k(
+                    top_k, 
+                    k, 
+                    NB {
+                        data: element.data,
+                        dist:dist
+                    }
+                );
             }
-            top_k = Self::update_top_k(
-                top_k, 
-                k, 
-                NB {
-                    data: element.data,
-                    dist:dist
-                }
-            );
+            // No need to check if we already have k elements and the dist is >= current max dist
         }
         top_k
     }
@@ -220,7 +258,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     #[inline(always)]
     pub fn knn_unchecked(
         &self, 
-        mut candidate:Vec<NB<T, A>>, 
+        mut top_k:Vec<NB<T, A>>, 
         k:usize, 
         point: ArrayView1<T>, 
         depth: usize,
@@ -230,7 +268,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         let axis = depth % self.dim;
         if self.is_leaf() {
             return self.best_k_in_leaf(
-                candidate, 
+                top_k, 
                 k, 
                 point,
                 point_norm_cache
@@ -252,28 +290,49 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             )
         };
         
-        candidate = next.knn_unchecked(
-            candidate, 
+        top_k = next.knn_unchecked(
+            top_k, 
             k, 
             point, 
             depth + 1, 
             point_norm_cache
         );
         
-        let cur_max_dist = candidate.last().map(|s| s.dist).unwrap_or(T::max_value());
-        let perp_dist = (point[axis] - axis_value).powi(2);
-        // If current_max_dist > perpendicular_dist, then
-        // there is a chance we need to update candidate from opposite branch
-        if cur_max_dist > perp_dist {
-            candidate = oppo.knn_unchecked(
-                candidate, 
-                k, 
-                point, 
-                depth + 1, 
-                point_norm_cache
+        let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(T::max_value());
+        // We can rule out some leaf/branches by some simple math
+        // However, these rules are not effective if dim is large. This has something to do with
+        // the volume of the ball and the volume of the hypercube in higher dimensions.
+
+        if oppo.is_leaf() {
+            let perp_dist = (point[axis] - axis_value).powi(2);
+            if cur_max_dist > perp_dist {
+                top_k = oppo.knn_unchecked(
+                    top_k, 
+                    k, 
+                    point, 
+                    depth + 1, 
+                    point_norm_cache
+                );
+            }
+        } else {
+            let dist_to_box = Self::closest_dist_to_box(
+                oppo.min_bounds.as_ref().unwrap(), 
+                oppo.max_bounds.as_ref().unwrap(), 
+                point
             );
+            if cur_max_dist > dist_to_box {
+                top_k = oppo.knn_unchecked(
+                    top_k, 
+                    k, 
+                    point, 
+                    depth + 1, 
+                    point_norm_cache
+                );
+            }
         }
-        candidate
+
+    
+        top_k
     }
 
 }
@@ -319,13 +378,11 @@ mod tests {
             .into_iter()
             .enumerate()
             .filter(|(_, arr)| arr.iter().all(|x| x.is_finite()))
-            .map(|(i, arr)| LeafElement{ data: i, row_vec: arr})
+            .map(|(i, arr)| LeafElement{ data: i, row_vec: arr, norm: arr.dot(&arr)})
             .collect::<Vec<_>>();
         let tree = Kdtree::build(
             &mut data,
             mat.ncols(),
-            32,
-            0,
         );
     
         let output = tree.knn(k, point.view());
