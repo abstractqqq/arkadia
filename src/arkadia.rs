@@ -1,7 +1,7 @@
 use crate::distances::{squared_euclidean};
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use num::Float;
-// use std::collections::BinaryHeap;
+use std::collections::BinaryHeap;
 use dary_heap::OctonaryHeap;
 
 pub enum KdtreeError {
@@ -12,8 +12,8 @@ pub enum KdtreeError {
 // Search Result
 // (Data, and distance)
 pub struct NB<T:Float, A>{
-    pub data: A ,
-    pub dist: T
+    pub dist: T,
+    pub item: A,
 }
 
 impl <T: Float, A> PartialEq for NB<T, A> {
@@ -69,7 +69,7 @@ impl <T: Float, A> Ord for NB<T, A> {
 
 pub struct LeafElement<'a, T:Float, A> {
     pub data: A, 
-    pub row_vec: &'a [T],
+    pub row_vec: ArrayView1<'a, T>,
     pub norm: T,
 }
 
@@ -81,9 +81,10 @@ pub struct Kdtree<'a, T: Float + 'static, A> {
     left: Option<Box<Kdtree<'a, T, A>>>,
     right: Option<Box<Kdtree<'a, T, A>>>,
     // Is a leaf node if this has values
+    split_axis: Option<usize>,
     split_axis_value: Option<T>,
-    min_bounds: Option<Vec<T>>,
-    max_bounds: Option<Vec<T>>,
+    min_bounds: Vec<T>,
+    max_bounds: Vec<T>,
     // Data
     data: Option<&'a [LeafElement<'a, T, A>]> // Not none when this is a leaf
 }
@@ -111,28 +112,29 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         depth: usize,
     ) -> Self {
         let n = data.len();
+        let mut min_bounds = vec![T::max_value(); dim];
+        let mut max_bounds = vec![T::min_value(); dim];
+        for elem in data.iter() {
+            for i in 0..dim {
+                min_bounds[i] = min_bounds[i].min(elem.row_vec[i]);
+                max_bounds[i] = max_bounds[i].max(elem.row_vec[i]);
+            }
+        }
         if n <= capacity {
             Kdtree {
                 dim: dim,
                 capacity: capacity,
                 left: None,
                 right: None,
+                split_axis: None,
                 split_axis_value: None,
-                min_bounds: None,
-                max_bounds: None,
+                min_bounds: min_bounds,
+                max_bounds: max_bounds,
                 data: Some(data),
             }
         } else {
             let axis = depth % dim;
             // let half = n >> 1;
-            let mut min_bounds = vec![T::max_value(); dim];
-            let mut max_bounds = vec![T::min_value(); dim];
-            for elem in data.iter() {
-                for i in 0..dim {
-                    min_bounds[i] = min_bounds[i].min(elem.row_vec[i]);
-                    max_bounds[i] = max_bounds[i].max(elem.row_vec[i]);
-                }
-            }
             let min_axis = min_bounds[axis];
             let max_axis = max_bounds[axis];
             let midpoint = min_axis + (max_axis - min_axis) / (T::one() + T::one());
@@ -160,9 +162,10 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     capacity,
                     depth + 1
                 ))),
+                split_axis: Some(axis),
                 split_axis_value: Some(midpoint),
-                min_bounds: Some(min_bounds),
-                max_bounds: Some(max_bounds),
+                min_bounds: min_bounds,
+                max_bounds: max_bounds,
                 data: None,
             }
         }
@@ -187,7 +190,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
 
     /// Updates the current top K with the incoming nb
     #[inline(always)]
-    fn update_top_k(mut top_k: Vec<NB<T, A>>, k:usize, nb: NB<T, A>) -> Vec<NB<T, A>> {
+    fn update_top_k(top_k: &mut Vec<NB<T, A>>, k:usize, nb: NB<T, A>) {
         let idx: usize = top_k.partition_point(|s| s <= &nb);
         if idx < top_k.len() { 
             if top_k.len() + 1 > k {
@@ -198,38 +201,36 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             // Note if idx < top_k.len() is false, then index == top_k.len() for free!
             top_k.push(nb); // by the end of the push, len is at most k.
         } // Do nothing if idx >= k, because that means no partition point was found within existing values
-        top_k
     }
 
     #[inline(always)]
     fn best_k_in_leaf(
         &self, 
-        mut top_k: Vec<NB<T, A>>, 
+        top_k: &mut Vec<NB<T, A>>, 
         k:usize, 
         point:ArrayView1<T>,
         point_norm_cache: T,
-    ) -> Vec<NB<T, A>> {
+    ) {
         // This is only called if is_leaf. Safe to unwrap.
         for element in self.data.unwrap().iter() {
             let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(T::max_value());
-            let y = ArrayView1::from(element.row_vec);
+            let y = element.row_vec;
             // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
             
             let dot_product = y.dot(&point);
             let dist = point_norm_cache + element.norm - dot_product - dot_product;
             if dist < cur_max_dist || top_k.len() < k {
-                top_k = Self::update_top_k(
+                Self::update_top_k(
                     top_k, 
                     k, 
                     NB {
-                        data: element.data,
-                        dist:dist
+                        dist: dist,
+                        item: element.data,
                     }
                 );
             }
             // No need to check if we already have k elements and the dist is >= current max dist
         }
-        top_k
     }
 
     pub fn knn(
@@ -245,39 +246,117 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             None
         } else {
             let point_norm = point.dot(&point);
-            Some(self.knn_unchecked(
-                Vec::with_capacity(k), 
+            let mut top_k = Vec::with_capacity(k);
+            self.knn_unchecked(
+                &mut top_k, 
                 k, 
                 point, 
                 0,
                 point_norm,
-            ))
+            );
+            Some(top_k)
         }
+    }
+
+    pub fn knn_non_recurse(
+        &self,
+        k:usize, 
+        point: ArrayView1<T>,
+    ) -> Option<Vec<NB<T,A>>> {
+
+        if k == 0 
+            || (point.len() != self.dim) 
+            || (point.iter().any(|v| !v.is_finite())) 
+        {
+            None
+        } else {
+            let mut top_k = Vec::with_capacity(k);
+            // min heap. Need to negate the dist in later operations
+            let mut pending = BinaryHeap::new();
+            pending.push(NB {dist: T::zero(), item: self}); 
+            let point_norm = point.dot(&point);
+            let mut cur_pending_max_dist = T::zero();
+            let mut cur_max_dist = T::max_value();
+            while !pending.is_empty() 
+            && (
+                top_k.len() < k 
+                || cur_pending_max_dist < cur_max_dist
+            )
+            {
+                Self::knn_one_step(&mut pending, &mut top_k, k, point, point_norm);
+                cur_max_dist = top_k.last().unwrap().dist;
+                cur_pending_max_dist = pending.peek().unwrap().dist.neg(); // make it positive
+            }
+            Some(top_k)
+        }
+
+    }
+
+    pub fn knn_one_step(
+        pending:&mut BinaryHeap<NB<T, &Kdtree<'a, T, A>>>,
+        top_k:&mut Vec<NB<T, A>>, 
+        k: usize,
+        point: ArrayView1<T>,
+        point_norm_cache: T
+    ) {
+
+        let current_max = if top_k.len() < k {
+            T::max_value() // replace this with distance bound if doing bounded search
+        } else {
+            top_k.last().unwrap().dist
+        };
+
+        let current_box = pending.pop().unwrap();
+        let mut current = current_box.item;
+        while !current.is_leaf() {
+            let axis_value = current.split_axis_value.unwrap();
+            let split_axis = current.split_axis.unwrap();
+            let next = if point[split_axis] < axis_value {
+                let next = current.right.as_ref().unwrap().as_ref();
+                current = current.left.as_ref().unwrap().as_ref();
+                next
+            } else {
+                let next = current.left.as_ref().unwrap().as_ref();
+                current = current.right.as_ref().unwrap().as_ref();
+                next
+            };
+            
+            let dist_to_box = Self::closest_dist_to_box(
+                next.min_bounds.as_ref(), 
+                next.max_bounds.as_ref(), 
+                point
+            ); // The next Tree, plus the min dist from the box to point
+            if dist_to_box < current_max {
+                pending.push(NB {dist: dist_to_box.neg(), item: next});
+            }
+        }     
+        current.best_k_in_leaf(top_k, k, point, point_norm_cache);
     }
 
     #[inline(always)]
     pub fn knn_unchecked(
         &self, 
-        mut top_k:Vec<NB<T, A>>, 
+        top_k:&mut Vec<NB<T, A>>, 
         k:usize, 
         point: ArrayView1<T>, 
         depth: usize,
         point_norm_cache: T,
-    ) -> Vec<NB<T, A>> {
+    ) {
         
-        let axis = depth % self.dim;
+        // let axis = depth % self.dim;
         if self.is_leaf() {
-            return self.best_k_in_leaf(
+            self.best_k_in_leaf(
                 top_k, 
                 k, 
                 point,
                 point_norm_cache
-            )
+            );
+            return
         }
         
         // Must exist
         let axis_value = self.split_axis_value.unwrap();
-        
+        let axis = self.split_axis.unwrap();
         let (next, oppo) = if point[axis] < axis_value {
             ( // Next = Self.left, opposite = self.right
                 self.left.as_ref().unwrap(),
@@ -290,7 +369,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             )
         };
         
-        top_k = next.knn_unchecked(
+        next.knn_unchecked(
             top_k, 
             k, 
             point, 
@@ -306,7 +385,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         if oppo.is_leaf() {
             let perp_dist = (point[axis] - axis_value).powi(2);
             if cur_max_dist > perp_dist {
-                top_k = oppo.knn_unchecked(
+                oppo.knn_unchecked(
                     top_k, 
                     k, 
                     point, 
@@ -316,12 +395,12 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             }
         } else {
             let dist_to_box = Self::closest_dist_to_box(
-                oppo.min_bounds.as_ref().unwrap(), 
-                oppo.max_bounds.as_ref().unwrap(), 
+                oppo.min_bounds.as_ref(), 
+                oppo.max_bounds.as_ref(), 
                 point
             );
             if cur_max_dist > dist_to_box {
-                top_k = oppo.knn_unchecked(
+                oppo.knn_unchecked(
                     top_k, 
                     k, 
                     point, 
@@ -330,9 +409,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 );
             }
         }
-
-    
-        top_k
     }
 
 }
@@ -389,7 +465,7 @@ mod tests {
     
         assert!(output.is_some());
         let output = output.unwrap();
-        let indices = output.iter().map(|nb| nb.data).collect::<Vec<_>>();
+        let indices = output.iter().map(|nb| nb.item).collect::<Vec<_>>();
         let distances = output.iter().map(|nb| nb.dist).collect::<Vec<_>>();
     
         assert_eq!(&ans_argmins[..k], &indices);

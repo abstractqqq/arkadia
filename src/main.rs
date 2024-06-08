@@ -52,7 +52,7 @@ fn main() {
         .enumerate()
         .map(|(i, arr)| LeafElement{ 
             data: i, 
-            row_vec: arr.to_slice().unwrap(), 
+            row_vec: arr, 
             norm: arr.dot(&arr)
         })
         .collect::<Vec<_>>();
@@ -64,12 +64,13 @@ fn main() {
     println!("My Kdtree build time: {}s", elapsed.as_secs_f32());
 
     let now = Instant::now();
-    let output = tree.knn(k, point.view());
+    let output = tree.knn_non_recurse(k, point.view());
+    // .knn(k, point.view());
     let elapsed = now.elapsed();
     println!("My Kdtree 1 query time spent: {}s", elapsed.as_secs_f32());
     assert!(output.is_some());
     let output = output.unwrap();
-    let indices = output.iter().map(|nb| nb.data).collect::<Vec<_>>();
+    let indices = output.iter().map(|nb| nb.item).collect::<Vec<_>>();
     let distances = output.iter().map(|nb| nb.dist).collect::<Vec<_>>();
 
     println!("{:?}", indices);
