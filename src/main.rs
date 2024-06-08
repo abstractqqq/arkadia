@@ -14,10 +14,10 @@ fn main() {
 
     use std::time::Instant;
 
-    let k: usize = 20usize;
+    let k: usize = 10usize;
     let mut v = Vec::new();
     let rows = 100_000usize;
-    let dim = 3;
+    let dim = 10;
     println!("Dim: {}, k: {}, size: {}", dim, k, rows);
     for _ in 0..rows {
         let data = (0..dim).map(|_| rand::random()).collect::<Vec<_>>();
