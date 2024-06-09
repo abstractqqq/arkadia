@@ -1,7 +1,7 @@
 mod arkadia;
 mod distances;
 
-use arkadia::{Kdtree, LeafElement};
+use arkadia::{Kdtree, LeafElement, suggest_capacity};
 use ndarray::prelude::*;
 
 use kdtree::KdTree as kd;
@@ -17,7 +17,7 @@ fn main() {
     let k: usize = 10usize;
     let mut v = Vec::new();
     let rows = 100_000usize;
-    let dim = 10;
+    let dim = 12;
     println!("Dim: {}, k: {}, size: {}", dim, k, rows);
     for _ in 0..rows {
         let data = (0..dim).map(|_| rand::random()).collect::<Vec<_>>();
@@ -54,8 +54,7 @@ fn main() {
             data: i, 
             row_vec: arr, 
             norm: arr.dot(&arr)
-        })
-        .collect::<Vec<_>>();
+        }).collect::<Vec<_>>();
     let tree = Kdtree::build(
         &mut data,
         mat.ncols(),
@@ -65,6 +64,8 @@ fn main() {
 
     let now = Instant::now();
     let output = tree.knn_non_recurse(k, point.view());
+    // .knn(k, point.view());
+    // .knn_non_recurse(k, point.view());
     // .knn(k, point.view());
     let elapsed = now.elapsed();
     println!("My Kdtree 1 query time spent: {}s", elapsed.as_secs_f32());
@@ -81,12 +82,12 @@ fn main() {
         let output = tree.knn(k, pt.view());
     }
     let elapsed = now.elapsed();
-    println!("My Kdtree 1k query time spent: {}s", elapsed.as_secs_f32());
+    println!("My Kdtree 1000 query time spent: {}s", elapsed.as_secs_f32());
 
 
     let now = Instant::now();
 
-    let mut kd = kd::with_capacity(dim, 64);
+    let mut kd = kd::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in mat.rows().into_iter().enumerate() {
         let sl = row.to_slice().unwrap();
         let _ = kd.add(sl, i);
@@ -111,6 +112,6 @@ fn main() {
         let output = kd.nearest(point_slice, k, &kdtree::distance::squared_euclidean);
     }
     let elapsed = now.elapsed();
-    println!("Kdtree package 1k query time spent: {}s", elapsed.as_secs_f32());
+    println!("Kdtree package 1000 query time spent: {}s", elapsed.as_secs_f32());
 
 }

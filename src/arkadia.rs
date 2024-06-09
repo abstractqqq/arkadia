@@ -1,8 +1,6 @@
 use crate::distances::{squared_euclidean};
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use num::Float;
-use std::collections::BinaryHeap;
-use dary_heap::OctonaryHeap;
 
 pub enum KdtreeError {
     EmptyData,
@@ -73,6 +71,16 @@ pub struct LeafElement<'a, T:Float, A> {
     pub norm: T,
 }
 
+pub fn suggest_capacity(dim:usize) -> usize {
+    if dim < 5 {
+        8
+    } else if dim < 12 {
+        16
+    } else {
+        32
+    }
+}
+
 pub struct Kdtree<'a, T: Float + 'static, A> {
     dim: usize,
     // capacity of leaf node
@@ -95,13 +103,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         data: &'a mut [LeafElement<'a, T, A>],
         dim: usize,
     ) -> Self {
-        let capacity = if dim < 5 {
-            16usize
-        } else if dim < 13 {
-            64usize
-        } else {
-            128usize
-        };
+        let capacity = suggest_capacity(dim);
         Self::build_unchecked(data, dim, capacity, 0)
     }
 
@@ -245,7 +247,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             None
         } else {
             let point_norm = point.dot(&point);
-            let mut top_k = Vec::with_capacity(k);
+            let mut top_k = Vec::with_capacity(k+1);
             self.knn_unchecked(
                 &mut top_k, 
                 k, 
@@ -269,7 +271,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         {
             None
         } else {
-            let mut top_k = Vec::with_capacity(k);
+            let mut top_k = Vec::with_capacity(k+1);
             // min heap. Need to negate the dist in later operations
             let mut pending = Vec::new();
             pending.push((T::min_value(), self));
