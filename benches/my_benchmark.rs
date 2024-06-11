@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::random;
 use ndarray::{Array2, Array1, arr1};
-use arkadia::{LeafElement, Kdtree, suggest_capacity};
+use arkadia::{LeafElement, Kdtree, suggest_capacity, matrix_to_leaf_elements, SplitMethod};
 use kdtree as kd;
 
 fn set_up_data() -> (Array2<f64>, Vec<Array1<f64>>) {
@@ -40,22 +40,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     let (matrix, points) = set_up_data();
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
-    let mut data = values.iter()
-        .zip(
-            matrix
-            .rows()
-            .into_iter()
-        )
-        .map(|(i, arr)| LeafElement{ 
-            item: i, 
-            row_vec: arr, 
-            norm: arr.dot(&arr)
-        }).collect::<Vec<_>>();
-
+    let binding = matrix.view();
+    let mut leaf_elements = matrix_to_leaf_elements(&binding, &values);
     let tree = Kdtree::build(
-        &mut data,
-        matrix.ncols(),
-    );
+        &mut leaf_elements
+        , matrix.ncols()
+        , SplitMethod::default() // defaults to midpoint
+    ); // For random uniform data, doesn't matter which method to choose
 
     let mut kd_tree = kd::KdTree::with_capacity(5, 16);
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -72,7 +63,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         }
     }));
 
-    c.bench_function("My Kd 200 queries", 
+    c.bench_function("ARKaDia 200 queries", 
     |b| b.iter(|| {
         for rv in points.iter() {
             let _ = tree.knn(k, rv.view());
