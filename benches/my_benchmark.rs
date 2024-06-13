@@ -30,11 +30,11 @@ fn knn_queries_3d(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaf_elements(&binding, &values);
+    // For random uniform data, doesn't matter which method to choose. The kdtree package also uses midpoint
     let tree = Kdtree::build(
         &mut leaf_elements,
-        matrix.ncols(),
         SplitMethod::default(), // defaults to midpoint
-    ); // For random uniform data, doesn't matter which method to choose. The kdtree package also uses midpoint
+    ).unwrap(); 
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -68,11 +68,11 @@ fn knn_queries_5d(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaf_elements(&binding, &values);
+    // For random uniform data, doesn't matter which method to choose
     let tree = Kdtree::build(
         &mut leaf_elements,
-        matrix.ncols(),
         SplitMethod::default(), // defaults to midpoint
-    ); // For random uniform data, doesn't matter which method to choose
+    ).unwrap(); 
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -107,11 +107,11 @@ fn knn_queries_10d(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaf_elements(&binding, &values);
+    // For random uniform data, doesn't matter which method to choose
     let tree = Kdtree::build(
         &mut leaf_elements,
-        matrix.ncols(),
         SplitMethod::default(), // defaults to midpoint
-    ); // For random uniform data, doesn't matter which method to choose
+    ).unwrap(); 
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -144,11 +144,11 @@ fn within_queries(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaf_elements(&binding, &values);
+    // For random uniform data, doesn't matter which method to choose
     let tree = Kdtree::build(
         &mut leaf_elements,
-        matrix.ncols(),
         SplitMethod::default(), // defaults to midpoint
-    ); // For random uniform data, doesn't matter which method to choose
+    ).unwrap(); 
 
     let mut kd_tree = kd::KdTree::with_capacity(5, 16);
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -189,11 +189,11 @@ fn within_count_queries(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaf_elements(&binding, &values);
+    // For random uniform data, doesn't matter which method to choose
     let tree = Kdtree::build(
         &mut leaf_elements,
-        matrix.ncols(),
         SplitMethod::default(), // defaults to midpoint
-    ); // For random uniform data, doesn't matter which method to choose
+    ).unwrap(); 
 
     let mut kd_tree = kd::KdTree::with_capacity(5, 16);
     for (i, row) in matrix.rows().into_iter().enumerate() {
