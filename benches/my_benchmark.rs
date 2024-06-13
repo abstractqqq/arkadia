@@ -3,7 +3,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use kdtree as kd;
 use ndarray::{arr1, Array1, Array2};
 
-fn set_up_data(dim:usize) -> (Array2<f64>, Vec<Array1<f64>>) {
+fn set_up_data(dim: usize) -> (Array2<f64>, Vec<Array1<f64>>) {
     let mut v = Vec::new();
     let rows = 50_000usize;
     for _ in 0..rows {
@@ -34,7 +34,8 @@ fn knn_queries_3d(c: &mut Criterion) {
     let tree = Kdtree::build(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-    ).unwrap(); 
+    )
+    .unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -72,7 +73,8 @@ fn knn_queries_5d(c: &mut Criterion) {
     let tree = Kdtree::build(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-    ).unwrap(); 
+    )
+    .unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -98,7 +100,6 @@ fn knn_queries_5d(c: &mut Criterion) {
     });
 }
 
-
 fn knn_queries_10d(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 10usize;
@@ -111,7 +112,8 @@ fn knn_queries_10d(c: &mut Criterion) {
     let tree = Kdtree::build(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-    ).unwrap(); 
+    )
+    .unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -138,7 +140,6 @@ fn knn_queries_10d(c: &mut Criterion) {
 }
 
 fn within_queries(c: &mut Criterion) {
-
     let (matrix, points) = set_up_data(5);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
@@ -148,7 +149,8 @@ fn within_queries(c: &mut Criterion) {
     let tree = Kdtree::build(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-    ).unwrap(); 
+    )
+    .unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(5, 16);
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -183,7 +185,6 @@ fn within_queries(c: &mut Criterion) {
 }
 
 fn within_count_queries(c: &mut Criterion) {
-
     let (matrix, points) = set_up_data(5);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
@@ -193,7 +194,8 @@ fn within_count_queries(c: &mut Criterion) {
     let tree = Kdtree::build(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-    ).unwrap(); 
+    )
+    .unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(5, 16);
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -208,8 +210,14 @@ fn within_count_queries(c: &mut Criterion) {
             }
         })
     });
-
 }
 
-criterion_group!(benches, knn_queries_3d, knn_queries_5d, knn_queries_10d, within_queries, within_count_queries);
+criterion_group!(
+    benches,
+    knn_queries_3d,
+    knn_queries_5d,
+    knn_queries_10d,
+    within_queries,
+    within_count_queries
+);
 criterion_main!(benches);
