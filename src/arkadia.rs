@@ -349,7 +349,8 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         }
     }
 
-    pub fn knn(&self, k: usize, point: ArrayView1<T>) -> Option<Vec<NB<T, A>>> {
+
+    pub fn knn(&self, k: usize, point: ArrayView1<T>, epsilon:T) -> Option<Vec<NB<T, A>>> {
         if k == 0 || (point.len() != self.dim) || (point.iter().any(|x| !x.is_finite())) {
             None
         } else {
@@ -366,6 +367,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     point,
                     point_norm,
                     T::max_value(),
+                    epsilon
                 );
             }
             Some(top_k)
@@ -376,6 +378,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         &self,
         k: usize,
         leaf_element: LeafElement<'a, T, A>,
+        epsilon: T
     ) -> Option<Vec<NB<T, A>>> {
         if k == 0 || (leaf_element.dim() != self.dim) || (!leaf_element.is_finite()) {
             None
@@ -392,12 +395,14 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     leaf_element.row_vec,
                     leaf_element.norm,
                     T::max_value(),
+                    epsilon
                 );
             }
             Some(top_k)
         }
     }
 
+    // For bounded, epsilon is 0
     pub fn knn_bounded(
         &self,
         k: usize,
@@ -424,6 +429,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     point,
                     point_norm,
                     max_dist_bound,
+                    T::zero()
                 );
             }
             Some(top_k)
@@ -455,6 +461,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     leaf_element.row_vec,
                     leaf_element.norm,
                     max_dist_bound,
+                    T::zero()
                 );
             }
             Some(top_k)
@@ -468,6 +475,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         point: ArrayView1<T>,
         point_norm_cache: T,
         max_dist_bound: T,
+        epsilon: T,
     ) {
         let current_max = if top_k.len() < k {
             max_dist_bound
@@ -496,7 +504,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 next.max_bounds.as_ref(),
                 point,
             ); // (the next Tree, min dist from the box to point)
-            if dist_to_box < current_max {
+            if dist_to_box + epsilon < current_max {
                 pending.push((dist_to_box, next));
             }
         }
@@ -595,7 +603,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         }
     }
 
-    pub fn within_one_step(
+    fn within_one_step(
         pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
         neighbors: &mut Vec<NB<T, A>>,
         point: ArrayView1<T>,
@@ -631,7 +639,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         current.update_nb_within(neighbors, point, point_norm_cache, radius);
     }
 
-    pub fn within_count_one_step(
+    fn within_count_one_step(
         pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
         point: ArrayView1<T>,
         point_norm_cache: T,
@@ -713,7 +721,7 @@ mod tests {
 
         let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
-        let output = tree.knn(k, point.view());
+        let output = tree.knn(k, point.view(), 0f64);
 
         assert!(output.is_some());
         let output = output.unwrap();
@@ -894,7 +902,7 @@ mod tests {
 
         let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MEAN).unwrap();
 
-        let output = tree.knn(k, point.view());
+        let output = tree.knn(k, point.view(), 0f64);
 
         assert!(output.is_some());
         let output = output.unwrap();
@@ -936,7 +944,7 @@ mod tests {
 
         let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
 
-        let output = tree.knn(k, point.view());
+        let output = tree.knn(k, point.view(), 0f64);
 
         assert!(output.is_some());
         let output = output.unwrap();

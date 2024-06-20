@@ -55,7 +55,7 @@ fn knn_queries_3d(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries (3D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view());
+                let _ = tree.knn(k, rv.view(), 0f64);
             }
         })
     });
@@ -94,7 +94,7 @@ fn knn_queries_5d(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries (5D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view());
+                let _ = tree.knn(k, rv.view(), 0f64);
             }
         })
     });
@@ -133,7 +133,7 @@ fn knn_queries_10d(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries (10D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view());
+                let _ = tree.knn(k, rv.view(), 0f64);
             }
         })
     });
