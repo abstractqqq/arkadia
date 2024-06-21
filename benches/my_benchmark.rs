@@ -1,7 +1,11 @@
-use arkadia::{matrix_to_leaf_elements, suggest_capacity, Kdtree, SplitMethod};
+use arkadia::{matrix_to_leaf_elements, matrix_to_leaf_elements_linf, suggest_capacity, Kdtree, LIKdtree, SplitMethod};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use kdtree as kd;
 use ndarray::{arr1, Array1, Array2};
+
+fn linf_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
+    a1.iter().zip(a2.iter()).fold(0., |acc, (x, y)| acc.max((x - y).abs()))
+}
 
 fn set_up_data(dim: usize) -> (Array2<f64>, Vec<Array1<f64>>) {
     let mut v = Vec::new();
@@ -100,6 +104,45 @@ fn knn_queries_5d(c: &mut Criterion) {
     });
 }
 
+fn knn_queries_5d_linf(c: &mut Criterion) {
+    let k: usize = 10usize;
+    let dim: usize = 5usize;
+    let (matrix, points) = set_up_data(dim);
+    let values = (0..matrix.nrows()).collect::<Vec<_>>();
+
+    let binding = matrix.view();
+    let mut leaf_elements = matrix_to_leaf_elements_linf(&binding, &values);
+    // For random uniform data, doesn't matter which method to choose
+    let tree = LIKdtree::build(
+        &mut leaf_elements,
+        SplitMethod::default(), // defaults to midpoint
+    )
+    .unwrap();
+
+    let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
+    for (i, row) in matrix.rows().into_iter().enumerate() {
+        let sl = row.to_slice().unwrap();
+        let _ = kd_tree.add(sl, i);
+    }
+
+    c.bench_function("KdTree Package 200 10NN queries with L Inf dist (5D)", |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let point_slice = rv.as_slice().unwrap();
+                let _ = kd_tree.nearest(point_slice, k, &linf_dist_slice);
+            }
+        })
+    });
+
+    c.bench_function("ARKaDia 200 10NN queries with L Inf dist (5D)", |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree.knn(k, rv.view(), 0f64);
+            }
+        })
+    });
+}
+
 fn knn_queries_10d(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 10usize;
@@ -131,6 +174,45 @@ fn knn_queries_10d(c: &mut Criterion) {
     });
 
     c.bench_function("ARKaDia 200 10NN queries (10D)", |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree.knn(k, rv.view(), 0f64);
+            }
+        })
+    });
+}
+
+fn knn_queries_10d_linf(c: &mut Criterion) {
+    let k: usize = 10usize;
+    let dim: usize = 10usize;
+    let (matrix, points) = set_up_data(dim);
+    let values = (0..matrix.nrows()).collect::<Vec<_>>();
+
+    let binding = matrix.view();
+    let mut leaf_elements = matrix_to_leaf_elements_linf(&binding, &values);
+    // For random uniform data, doesn't matter which method to choose
+    let tree = LIKdtree::build(
+        &mut leaf_elements,
+        SplitMethod::default(), // defaults to midpoint
+    )
+    .unwrap();
+
+    let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
+    for (i, row) in matrix.rows().into_iter().enumerate() {
+        let sl = row.to_slice().unwrap();
+        let _ = kd_tree.add(sl, i);
+    }
+
+    c.bench_function("KdTree Package 200 10NN queries with L Inf dist (10D)", |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let point_slice = rv.as_slice().unwrap();
+                let _ = kd_tree.nearest(point_slice, k, &linf_dist_slice);
+            }
+        })
+    });
+
+    c.bench_function("ARKaDia 200 10NN queries with L Inf dist (10D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
                 let _ = tree.knn(k, rv.view(), 0f64);
@@ -214,10 +296,12 @@ fn within_count_queries(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    knn_queries_3d,
-    knn_queries_5d,
-    knn_queries_10d,
-    within_queries,
-    within_count_queries
+    // knn_queries_3d,
+    // knn_queries_5d,
+    knn_queries_5d_linf,
+    knn_queries_10d_linf,
+    // knn_queries_10d,
+    // within_queries,
+    // within_count_queries
 );
 criterion_main!(benches);
