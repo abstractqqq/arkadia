@@ -46,7 +46,7 @@ pub fn matrix_to_leaf_elements<'a, T: Float + 'static, A: Copy>(
         .collect::<Vec<_>>()
 }
 
-pub fn matrix_to_leaf_elements_linf<'a, T: Float + 'static, A: Copy>(
+pub fn matrix_to_leaf_elements_no_norm<'a, T: Float + 'static, A: Copy>(
     matrix: &'a ArrayView2<'a, T>,
     values: &'a [A],
 ) -> Vec<LeafElement<'a, T, A>> {

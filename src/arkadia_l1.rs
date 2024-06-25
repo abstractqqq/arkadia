@@ -2,11 +2,32 @@ use ndarray::ArrayView1;
 use num::Float;
 use crate::{SplitMethod, NB, LeafElement};
 
-pub struct Kdtree<'a, T: Float + 'static, A> {
+#[inline(always)]
+pub fn l1_dist<T:Float>(a1: ArrayView1<T>, a2: ArrayView1<T>) -> T {
+
+    let a1 = a1.as_slice().unwrap();
+    let a2 = a2.as_slice().unwrap();
+    let mut dist = T::zero();
+    let m = (a1.len() >> 2) << 2;
+
+    for (x, y) in a1[m..].iter().copied().zip(a2[m..].iter().copied()) {
+        dist = dist + (x-y).abs()
+    }
+    for arr in a1.iter().copied().zip(a2.iter().copied()).array_chunks::<8>() {
+        for (x, y) in arr {
+            dist = dist + (x-y).abs()
+        }
+    }
+    dist
+
+}
+
+/// Kd Tree with L Infinity as metric on the k-dimensional space
+pub struct L1Kdtree<'a, T: Float + 'static, A> {
     dim: usize,
     // Nodes
-    left: Option<Box<Kdtree<'a, T, A>>>,
-    right: Option<Box<Kdtree<'a, T, A>>>,
+    left: Option<Box<L1Kdtree<'a, T, A>>>,
+    right: Option<Box<L1Kdtree<'a, T, A>>>,
     // Is a leaf node if this has values
     split_axis: Option<usize>,
     split_axis_value: Option<T>,
@@ -16,7 +37,8 @@ pub struct Kdtree<'a, T: Float + 'static, A> {
     data: Option<&'a [LeafElement<'a, T, A>]>, // Not none when this is a leaf
 }
 
-impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
+impl<'a, T: Float + 'static, A: Copy> L1Kdtree<'a, T, A> {
+
     pub fn build(data: &'a mut [LeafElement<'a, T, A>], how: SplitMethod) -> Result<Self, String> {
         if data.is_empty() {
             return Err("Empty data.".into());
@@ -38,7 +60,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         if capacity == 0 {
             return Err("Zero capacity.".into());
         }
-
         Ok(Self::build_unchecked(data, dim, capacity, 0, how))
     }
 
@@ -68,7 +89,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         let n = data.len();
         let (min_bounds, max_bounds) = Self::find_bounds(data, depth, dim);
         if n <= capacity {
-            Kdtree {
+            L1Kdtree {
                 dim: dim,
                 left: None,
                 right: None,
@@ -113,7 +134,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             };
 
             let (left, right) = data.split_at_mut(split_idx);
-            Kdtree {
+            L1Kdtree {
                 dim: dim,
                 left: Some(Box::new(Self::build_unchecked(
                     left,
@@ -145,13 +166,12 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     #[inline(always)]
     // Computes the distance from the closest potential point in box to P
     fn closest_dist_to_box(min_bounds: &[T], max_bounds: &[T], point: ArrayView1<T>) -> T {
-
         let mut dist = T::zero();
         for i in 0..point.len() {
             if point[i] > max_bounds[i] {
-                dist = dist + (point[i] - max_bounds[i]).powi(2);
+                dist = dist + (point[i] - max_bounds[i]).abs();
             } else if point[i] < min_bounds[i] {
-                dist = dist + (point[i] - min_bounds[i]).powi(2);
+                dist = dist + (point[i] - min_bounds[i]).abs();
             }
         }
         dist
@@ -163,7 +183,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         top_k: &mut Vec<NB<T, A>>,
         k: usize,
         point: ArrayView1<T>,
-        point_norm_cache: T,
         max_dist_bound: T,
     ) {
         let max_permissible_dist = T::max_value().min(max_dist_bound);
@@ -171,10 +190,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         for element in self.data.unwrap().iter() {
             let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(max_dist_bound);
             let y = element.row_vec;
-            // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
-            let dot_product = y.dot(&point);
-            let dist = point_norm_cache + element.norm - dot_product - dot_product;
-
+            let dist = l1_dist(y, point);
             if dist < cur_max_dist || (top_k.len() < k && dist <= max_permissible_dist) {
                 let nb = NB {
                     dist: dist,
@@ -184,16 +200,14 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 if idx < top_k.len() {
                     if top_k.len() + 1 > k {
                         top_k.pop();
-                    } // This ensures top_k has k elements and no need to allocate
+                    } 
                     top_k.insert(idx, nb);
                 } else if top_k.len() < k {
-                    // Note if idx < top_k.len() is false, then index == top_k.len() for free!
-                    // by the end of the push, len is at most k.
                     top_k.push(nb);
-                } // Do nothing if idx >= k, because that means no partition point was found within existing values
+                } 
             }
-            // No need to check if we already have k elements and the dist is >= current max dist
         }
+        // You can find code comments in arkadia.rs
     }
 
     #[inline(always)]
@@ -201,16 +215,12 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         &self,
         neighbors: &mut Vec<NB<T, A>>,
         point: ArrayView1<T>,
-        point_norm_cache: T,
         radius: T,
     ) {
         // This is only called if is_leaf. Safe to unwrap.
         for element in self.data.unwrap().iter() {
             let y = element.row_vec;
-            // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
-            // But usually this comes with 1-e12 precision lost
-            let dot_product = y.dot(&point);
-            let dist = point_norm_cache + element.norm - dot_product - dot_product;
+            let dist = l1_dist(y, point);
             if dist <= radius {
                 neighbors.push(NB {
                     dist: dist,
@@ -229,14 +239,12 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             let mut top_k = Vec::with_capacity(k + 1);
             let mut pending = Vec::with_capacity(k + 1);
             pending.push((T::min_value(), self));
-            let point_norm = point.dot(&point);
             while !pending.is_empty() {
                 Self::knn_one_step(
                     &mut pending,
                     &mut top_k,
                     k,
                     point,
-                    point_norm,
                     T::max_value(),
                     epsilon
                 );
@@ -264,7 +272,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     &mut top_k,
                     k,
                     leaf_element.row_vec,
-                    leaf_element.norm,
                     T::max_value(),
                     epsilon
                 );
@@ -291,14 +298,12 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             let mut top_k = Vec::with_capacity(k + 1);
             let mut pending = Vec::with_capacity(k + 1);
             pending.push((T::min_value(), self));
-            let point_norm = point.dot(&point);
             while !pending.is_empty() {
                 Self::knn_one_step(
                     &mut pending,
                     &mut top_k,
                     k,
                     point,
-                    point_norm,
                     max_dist_bound,
                     T::zero()
                 );
@@ -330,7 +335,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     &mut top_k,
                     k,
                     leaf_element.row_vec,
-                    leaf_element.norm,
                     max_dist_bound,
                     T::zero()
                 );
@@ -340,11 +344,10 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     }
 
     pub fn knn_one_step(
-        pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
+        pending: &mut Vec<(T, &L1Kdtree<'a, T, A>)>,
         top_k: &mut Vec<NB<T, A>>,
         k: usize,
         point: ArrayView1<T>,
-        point_norm_cache: T,
         max_dist_bound: T,
         epsilon: T,
     ) {
@@ -370,6 +373,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 current = current.right.as_ref().unwrap().as_ref();
                 next
             };
+
             let dist_to_box = Self::closest_dist_to_box(
                 next.min_bounds.as_ref(),
                 next.max_bounds.as_ref(),
@@ -379,7 +383,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 pending.push((dist_to_box, next));
             }
         }
-        current.update_top_k(top_k, k, point, point_norm_cache, max_dist_bound);
+        current.update_top_k(top_k, k, point, max_dist_bound);
     }
 
     pub fn within(&self, point: ArrayView1<T>, radius: T, sort: bool) -> Option<Vec<NB<T, A>>> {
@@ -390,10 +394,9 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             // Always allocate some.
             let mut neighbors = Vec::with_capacity(32);
             let mut pending = Vec::with_capacity(32);
-            let point_norm = point.dot(&point);
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                Self::within_one_step(&mut pending, &mut neighbors, point, point_norm, radius);
+                Self::within_one_step(&mut pending, &mut neighbors, point, radius);
             }
             if sort {
                 neighbors.sort_unstable();
@@ -422,7 +425,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     &mut pending,
                     &mut neighbors,
                     leaf_element.row_vec,
-                    leaf_element.norm,
                     radius,
                 );
             }
@@ -442,10 +444,9 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             // Always allocate some.
             let mut cnt = 0u32;
             let mut pending = Vec::with_capacity(32);
-            let point_norm = point.dot(&point);
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                cnt += Self::within_count_one_step(&mut pending, point, point_norm, radius);
+                cnt += Self::within_count_one_step(&mut pending, point, radius);
             }
             Some(cnt)
         }
@@ -466,7 +467,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 cnt += Self::within_count_one_step(
                     &mut pending,
                     leaf_element.row_vec,
-                    leaf_element.norm,
                     radius,
                 );
             }
@@ -475,10 +475,9 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     }
 
     fn within_one_step(
-        pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
+        pending: &mut Vec<(T, &L1Kdtree<'a, T, A>)>,
         neighbors: &mut Vec<NB<T, A>>,
         point: ArrayView1<T>,
-        point_norm_cache: T,
         radius: T,
     ) {
         let (dist_to_box, tree) = pending.pop().unwrap(); // safe
@@ -507,13 +506,12 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 pending.push((dist_to_box, next));
             }
         }
-        current.update_nb_within(neighbors, point, point_norm_cache, radius);
+        current.update_nb_within(neighbors, point, radius);
     }
 
     fn within_count_one_step(
-        pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
+        pending: &mut Vec<(T, &L1Kdtree<'a, T, A>)>,
         point: ArrayView1<T>,
-        point_norm_cache: T,
         radius: T,
     ) -> u32 {
         let (dist_to_box, tree) = pending.pop().unwrap(); // safe
@@ -545,26 +543,42 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             // Return the count in current
             current.data.unwrap().iter().fold(0u32, |acc, element| {
                 let y = element.row_vec;
-                let dot_product = y.dot(&point);
-                let dist = point_norm_cache + element.norm - dot_product - dot_product;
+                let dist = l1_dist(y, point);
                 acc + (dist <= radius) as u32
             })
         }
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kdtree::distance::squared_euclidean;
-    use ndarray::{arr1, Array2};
+    use ndarray::{arr1, Array1, Array2};
+
+    fn l1_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
+        a1.iter().zip(a2.iter()).fold(0., |acc, (x, y)| acc + (x-y).abs())
+    }
 
     fn random_10d_rows() -> [f64; 10] {
         rand::random()
     }
 
     #[test]
-    fn test_10d_knn_l2_dist_midpoint() {
+    fn test_l1() {
+        for _ in 0..100 {
+            let v1 = random_10d_rows();
+            let v2 = random_10d_rows();
+            let a1 = Array1::from_vec(v1.to_vec());
+            let a2 = Array1::from_vec(v2.to_vec());
+            let result = l1_dist(a1.view(), a2.view());
+            let answer = l1_dist_slice(&v1, &v2);
+            assert!((result - answer).abs() < 1e-10)
+        }
+    }
+
+    #[test]
+    fn test_10d_knn_l1_dist_midpoint() {
         // 10 nearest neighbors, matrix of size 1000 x 10
         let k = 10usize;
         let mut v = Vec::new();
@@ -580,7 +594,7 @@ mod tests {
         let mut ans_distances = mat
             .rows()
             .into_iter()
-            .map(|v| squared_euclidean(v.to_slice().unwrap(), &point.to_vec()))
+            .map(|v| l1_dist_slice(v.to_slice().unwrap(), &point.to_vec()))
             .collect::<Vec<_>>();
         let mut ans_argmins = (0..rows).collect::<Vec<_>>();
         ans_argmins.sort_by(|&i, &j| ans_distances[i].partial_cmp(&ans_distances[j]).unwrap());
@@ -588,9 +602,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_no_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = L1Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.knn(k, point.view(), 0f64);
 
@@ -606,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn test_10d_knn_l2_dist_bounded() {
+    fn test_10d_knn_l1_dist_mean() {
         // 10 nearest neighbors, matrix of size 1000 x 10
         let k = 10usize;
         let mut v = Vec::new();
@@ -622,146 +636,7 @@ mod tests {
         let mut ans_distances = mat
             .rows()
             .into_iter()
-            .map(|v| squared_euclidean(v.to_slice().unwrap(), &point.to_vec()))
-            .collect::<Vec<_>>();
-        let mut ans_argmins = (0..rows).collect::<Vec<_>>();
-        ans_argmins.sort_by(|&i, &j| ans_distances[i].partial_cmp(&ans_distances[j]).unwrap());
-        ans_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        let bound: f64 = 0.28; // usually random data will give min dist ~ 0.24, 0.25
-        let idx = ans_distances.partition_point(|d| d < &bound);
-        let (mut ans_argmins, _) = ans_argmins.split_at(idx);
-        let (mut ans_distances, _) = ans_distances.split_at(idx);
-        ans_argmins = &ans_argmins[..(k).min(ans_argmins.len())];
-        ans_distances = &ans_distances[..(k).min(ans_distances.len())];
-
-        let values = (0..rows).collect::<Vec<_>>();
-        let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
-
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
-
-        let output = tree.knn_bounded(k, point.view(), bound);
-
-        assert!(output.is_some());
-        let output = output.unwrap();
-        let indices = output.iter().map(|nb| nb.item).collect::<Vec<_>>();
-        let distances = output.iter().map(|nb| nb.dist).collect::<Vec<_>>();
-
-        // May have <= k elements
-        assert_eq!(ans_argmins.len(), indices.len());
-        assert_eq!(ans_distances.len(), distances.len());
-        assert_eq!(&ans_argmins, &indices);
-        for (d1, d2) in ans_distances.iter().zip(distances.into_iter()) {
-            assert!((d1 - d2).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_10d_knn_l2_dist_within() {
-        // 10 nearest neighbors, matrix of size 1000 x 10
-        let mut v = Vec::new();
-        let rows = 1_000usize;
-        for _ in 0..rows {
-            v.extend_from_slice(&random_10d_rows());
-        }
-
-        let mat = Array2::from_shape_vec((rows, 10), v).unwrap();
-        let mat = mat.as_standard_layout().to_owned();
-        let point = arr1(&[0.5; 10]);
-        // brute force test
-        let mut ans_distances = mat
-            .rows()
-            .into_iter()
-            .map(|v| squared_euclidean(v.to_slice().unwrap(), &point.to_vec()))
-            .collect::<Vec<_>>();
-        let mut ans_argmins = (0..rows).collect::<Vec<_>>();
-        ans_argmins.sort_by(|&i, &j| ans_distances[i].partial_cmp(&ans_distances[j]).unwrap());
-        ans_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        let bound: f64 = 0.29; // usually random data will give min dist ~ 0.24, 0.25
-        let idx = ans_distances.partition_point(|d| d < &bound);
-        let (ans_argmins, _) = ans_argmins.split_at(idx);
-        let (ans_distances, _) = ans_distances.split_at(idx);
-
-        let values = (0..rows).collect::<Vec<_>>();
-        let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
-
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
-
-        let output = tree.within(point.view(), bound, true);
-
-        assert!(output.is_some());
-        let output = output.unwrap();
-        let indices = output.iter().map(|nb| nb.item).collect::<Vec<_>>();
-        let distances = output.iter().map(|nb| nb.dist).collect::<Vec<_>>();
-
-        // May have <= k elements
-        assert_eq!(ans_argmins.len(), indices.len());
-        assert_eq!(ans_distances.len(), distances.len());
-        assert_eq!(&ans_argmins, &indices);
-        for (d1, d2) in ans_distances.iter().zip(distances.into_iter()) {
-            assert!((d1 - d2).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_10d_knn_l2_dist_within_count() {
-        // 10 nearest neighbors, matrix of size 1000 x 10
-        let mut v = Vec::new();
-        let rows = 1_000usize;
-        for _ in 0..rows {
-            v.extend_from_slice(&random_10d_rows());
-        }
-
-        let mat = Array2::from_shape_vec((rows, 10), v).unwrap();
-        let mat = mat.as_standard_layout().to_owned();
-        let point = arr1(&[0.5; 10]);
-        // brute force test
-        let mut ans_distances = mat
-            .rows()
-            .into_iter()
-            .map(|v| squared_euclidean(v.to_slice().unwrap(), &point.to_vec()))
-            .collect::<Vec<_>>();
-        let mut ans_argmins = (0..rows).collect::<Vec<_>>();
-        ans_argmins.sort_by(|&i, &j| ans_distances[i].partial_cmp(&ans_distances[j]).unwrap());
-        ans_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        let bound: f64 = 0.29; // usually random data will give min dist ~ 0.24, 0.25
-        let idx = ans_distances.partition_point(|d| d < &bound);
-
-        let values = (0..rows).collect::<Vec<_>>();
-        let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
-
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
-
-        let output = tree.within_count(point.view(), bound);
-
-        // May have <= k elements
-        assert!(output.is_some());
-        assert_eq!(idx as u32, output.unwrap());
-    }
-
-    #[test]
-    fn test_10d_knn_l2_dist_mean() {
-        // 10 nearest neighbors, matrix of size 1000 x 10
-        let k = 10usize;
-        let mut v = Vec::new();
-        let rows = 1_000usize;
-        for _ in 0..rows {
-            v.extend_from_slice(&random_10d_rows());
-        }
-
-        let mat = Array2::from_shape_vec((rows, 10), v).unwrap();
-        let mat = mat.as_standard_layout().to_owned();
-        let point = arr1(&[0.5; 10]);
-        // brute force test
-        let mut ans_distances = mat
-            .rows()
-            .into_iter()
-            .map(|v| squared_euclidean(v.to_slice().unwrap(), &point.to_vec()))
+            .map(|v| l1_dist_slice(v.to_slice().unwrap(), &point.to_vec()))
             .collect::<Vec<_>>();
         let mut ans_argmins = (0..rows).collect::<Vec<_>>();
         ans_argmins.sort_by(|&i, &j| ans_distances[i].partial_cmp(&ans_distances[j]).unwrap());
@@ -769,9 +644,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_no_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MEAN).unwrap();
+        let tree = L1Kdtree::build(&mut leaf_elements, SplitMethod::MEAN).unwrap();
 
         let output = tree.knn(k, point.view(), 0f64);
 
@@ -787,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn test_10d_knn_l2_dist_median() {
+    fn test_10d_knn_l1_dist_median() {
         // 10 nearest neighbors, matrix of size 1000 x 10
         let k = 10usize;
         let mut v = Vec::new();
@@ -803,7 +678,7 @@ mod tests {
         let mut ans_distances = mat
             .rows()
             .into_iter()
-            .map(|v| squared_euclidean(v.to_slice().unwrap(), &point.to_vec()))
+            .map(|v| l1_dist_slice(v.to_slice().unwrap(), &point.to_vec()))
             .collect::<Vec<_>>();
         let mut ans_argmins = (0..rows).collect::<Vec<_>>();
         ans_argmins.sort_by(|&i, &j| ans_distances[i].partial_cmp(&ans_distances[j]).unwrap());
@@ -811,9 +686,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_no_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
+        let tree = L1Kdtree::build(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
 
         let output = tree.knn(k, point.view(), 0f64);
 

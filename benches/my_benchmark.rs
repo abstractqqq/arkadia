@@ -1,4 +1,4 @@
-use arkadia::{matrix_to_leaf_elements, matrix_to_leaf_elements_linf, suggest_capacity, Kdtree, LIKdtree, SplitMethod};
+use arkadia::{matrix_to_leaf_elements, matrix_to_leaf_elements_no_norm, suggest_capacity, Kdtree, LIKdtree, SplitMethod};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use kdtree as kd;
 use ndarray::{arr1, Array1, Array2};
@@ -111,7 +111,7 @@ fn knn_queries_5d_linf(c: &mut Criterion) {
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
-    let mut leaf_elements = matrix_to_leaf_elements_linf(&binding, &values);
+    let mut leaf_elements = matrix_to_leaf_elements_no_norm(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
     let tree = LIKdtree::build(
         &mut leaf_elements,
@@ -189,7 +189,7 @@ fn knn_queries_10d_linf(c: &mut Criterion) {
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
-    let mut leaf_elements = matrix_to_leaf_elements_linf(&binding, &values);
+    let mut leaf_elements = matrix_to_leaf_elements_no_norm(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
     let tree = LIKdtree::build(
         &mut leaf_elements,

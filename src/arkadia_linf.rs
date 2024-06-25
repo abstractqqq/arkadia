@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use ndarray::ArrayView1;
 use num::Float;
 use crate::{SplitMethod, NB, LeafElement};
@@ -8,18 +7,18 @@ pub fn linf_dist<T:Float>(a1: ArrayView1<T>, a2: ArrayView1<T>) -> T {
 
     let a1 = a1.as_slice().unwrap();
     let a2 = a2.as_slice().unwrap();
-    let mut norm = T::zero();
+    let mut dist = T::zero();
     let m = (a1.len() >> 2) << 2;
 
     for (x, y) in a1[m..].iter().copied().zip(a2[m..].iter().copied()) {
-        norm = norm.max((x-y).abs())
+        dist = dist.max((x-y).abs())
     }
     for arr in a1.iter().copied().zip(a2.iter().copied()).array_chunks::<4>() {
         for (x, y) in arr {
-            norm = norm.max((x-y).abs())
+            dist = dist.max((x-y).abs())
         }
     }
-    norm
+    dist
 
 }
 
@@ -167,20 +166,15 @@ impl<'a, T: Float + 'static, A: Copy> LIKdtree<'a, T, A> {
     #[inline(always)]
     // Computes the distance from the closest potential point in box to P
     fn closest_dist_to_box(min_bounds: &[T], max_bounds: &[T], point: ArrayView1<T>) -> T {
-        // let mut dist = T::zero();
-        let mut cur_max = T::min_value();
-        let mut cur_min = T::max_value();
+        let mut dist = T::zero();
         for i in 0..point.len() {
             if point[i] > max_bounds[i] {
-                cur_max = cur_max.max(point[i] - max_bounds[i]);
-                cur_min = cur_min.min(point[i] - max_bounds[i]);
-                // dist = dist.max((point[i] - max_bounds[i]).abs());
+                dist = dist.max((point[i] - max_bounds[i]).abs());
             } else if point[i] < min_bounds[i] {
-                cur_max = cur_max.max(point[i] - min_bounds[i]);
-                cur_min = cur_min.min(point[i] - min_bounds[i]);
+                dist = dist.max((point[i] - min_bounds[i]).abs());
             }
         }
-        cur_max.abs().max(cur_min.abs())
+        dist
     }
 
     #[inline(always)]
@@ -349,6 +343,7 @@ impl<'a, T: Float + 'static, A: Copy> LIKdtree<'a, T, A> {
         }
     }
 
+    #[inline(always)]
     pub fn knn_one_step(
         pending: &mut Vec<(T, &LIKdtree<'a, T, A>)>,
         top_k: &mut Vec<NB<T, A>>,
@@ -379,11 +374,12 @@ impl<'a, T: Float + 'static, A: Copy> LIKdtree<'a, T, A> {
                 current = current.right.as_ref().unwrap().as_ref();
                 next
             };
+
             let dist_to_box = Self::closest_dist_to_box(
                 next.min_bounds.as_ref(),
                 next.max_bounds.as_ref(),
                 point,
-            ); // (the next Tree, min dist from the box to point)
+            ); // (min dist from the box to point, the next Tree)
             if dist_to_box + epsilon < current_max {
                 pending.push((dist_to_box, next));
             }
@@ -479,6 +475,7 @@ impl<'a, T: Float + 'static, A: Copy> LIKdtree<'a, T, A> {
         }
     }
 
+    #[inline(always)]
     fn within_one_step(
         pending: &mut Vec<(T, &LIKdtree<'a, T, A>)>,
         neighbors: &mut Vec<NB<T, A>>,
@@ -514,6 +511,7 @@ impl<'a, T: Float + 'static, A: Copy> LIKdtree<'a, T, A> {
         current.update_nb_within(neighbors, point, radius);
     }
 
+    #[inline(always)]
     fn within_count_one_step(
         pending: &mut Vec<(T, &LIKdtree<'a, T, A>)>,
         point: ArrayView1<T>,
@@ -608,7 +606,7 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_linf(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_no_norm(&binding, &values);
 
         let tree = LIKdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
@@ -650,7 +648,7 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_linf(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_no_norm(&binding, &values);
 
         let tree = LIKdtree::build(&mut leaf_elements, SplitMethod::MEAN).unwrap();
 
@@ -692,7 +690,7 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_linf(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaf_elements_no_norm(&binding, &values);
 
         let tree = LIKdtree::build(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
 

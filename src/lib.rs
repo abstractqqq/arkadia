@@ -14,15 +14,16 @@
 /// within_count returns a u32 as opposed to usize because that can help me skip a type conversion when used with Polars.
 
 
-
 pub mod arkadia;
 pub mod arkadia_linf;
+pub mod arkadia_l1;
 pub mod utils;
 pub mod neighbor;
 pub mod leaf_element;
 
-pub use utils::{matrix_to_leaf_elements, matrix_to_leaf_elements_linf, suggest_capacity, SplitMethod};
+pub use utils::{matrix_to_leaf_elements, matrix_to_leaf_elements_no_norm, suggest_capacity, SplitMethod};
 pub use arkadia::Kdtree;
 pub use arkadia_linf::{LIKdtree, linf_dist};
+pub use arkadia_l1::{L1Kdtree, l1_dist};
 pub use neighbor::NB;
 pub use leaf_element::LeafElement;
