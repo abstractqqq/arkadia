@@ -1,10 +1,14 @@
-use arkadia::{matrix_to_leaves, matrix_to_leaves_w_norm, suggest_capacity, Kdtree, LpKdtree, LP, SplitMethod};
+use arkadia::{
+    matrix_to_leaves, matrix_to_leaves_w_norm, suggest_capacity, Kdtree, LpKdtree, SplitMethod, LP,
+};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use kdtree as kd;
 use ndarray::{arr1, Array1, Array2};
 
 fn linf_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
-    a1.iter().zip(a2.iter()).fold(0., |acc, (x, y)| acc.max((x - y).abs()))
+    a1.iter()
+        .zip(a2.iter())
+        .fold(0., |acc, (x, y)| acc.max((x - y).abs()))
 }
 
 fn set_up_data(dim: usize) -> (Array2<f64>, Vec<Array1<f64>>) {
@@ -116,7 +120,7 @@ fn knn_queries_5d_linf(c: &mut Criterion) {
     let tree = LpKdtree::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-        LP::LINF
+        LP::LINF,
     )
     .unwrap();
 
@@ -126,14 +130,17 @@ fn knn_queries_5d_linf(c: &mut Criterion) {
         let _ = kd_tree.add(sl, i);
     }
 
-    c.bench_function("KdTree Package 200 10NN queries with L Inf dist (5D)", |b| {
-        b.iter(|| {
-            for rv in points.iter() {
-                let point_slice = rv.as_slice().unwrap();
-                let _ = kd_tree.nearest(point_slice, k, &linf_dist_slice);
-            }
-        })
-    });
+    c.bench_function(
+        "KdTree Package 200 10NN queries with L Inf dist (5D)",
+        |b| {
+            b.iter(|| {
+                for rv in points.iter() {
+                    let point_slice = rv.as_slice().unwrap();
+                    let _ = kd_tree.nearest(point_slice, k, &linf_dist_slice);
+                }
+            })
+        },
+    );
 
     c.bench_function("ARKaDia 200 10NN queries with L Inf dist (5D)", |b| {
         b.iter(|| {
@@ -195,7 +202,7 @@ fn knn_queries_10d_linf(c: &mut Criterion) {
     let tree = LpKdtree::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-        LP::LINF
+        LP::LINF,
     )
     .unwrap();
 
@@ -205,14 +212,17 @@ fn knn_queries_10d_linf(c: &mut Criterion) {
         let _ = kd_tree.add(sl, i);
     }
 
-    c.bench_function("KdTree Package 200 10NN queries with L Inf dist (10D)", |b| {
-        b.iter(|| {
-            for rv in points.iter() {
-                let point_slice = rv.as_slice().unwrap();
-                let _ = kd_tree.nearest(point_slice, k, &linf_dist_slice);
-            }
-        })
-    });
+    c.bench_function(
+        "KdTree Package 200 10NN queries with L Inf dist (10D)",
+        |b| {
+            b.iter(|| {
+                for rv in points.iter() {
+                    let point_slice = rv.as_slice().unwrap();
+                    let _ = kd_tree.nearest(point_slice, k, &linf_dist_slice);
+                }
+            })
+        },
+    );
 
     c.bench_function("ARKaDia 200 10NN queries with L Inf dist (10D)", |b| {
         b.iter(|| {

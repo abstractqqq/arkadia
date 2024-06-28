@@ -1,7 +1,7 @@
+use crate::{leaf::KdLeaf, KNNRegressor, Leaf, SplitMethod, KDTQ, NB};
 /// L1 and Linf distance KdTrees
 use ndarray::ArrayView1;
 use num::Float;
-use crate::{leaf::KdLeaf, KNNRegressor, Leaf, SplitMethod, KDTQ, NB};
 
 #[derive(Clone)]
 pub enum LP {
@@ -10,9 +10,7 @@ pub enum LP {
 }
 
 impl LP {
-
-    fn dist<T:Float>(&self, a1: ArrayView1<T>, a2: ArrayView1<T>) -> T {
-
+    fn dist<T: Float>(&self, a1: ArrayView1<T>, a2: ArrayView1<T>) -> T {
         let a1 = a1.as_slice().unwrap();
         let a2 = a2.as_slice().unwrap();
         let mut dist = T::zero();
@@ -20,31 +18,41 @@ impl LP {
         match self {
             LP::L1 => {
                 for (x, y) in a1[m..].iter().copied().zip(a2[m..].iter().copied()) {
-                    dist = dist + (x-y).abs();
+                    dist = dist + (x - y).abs();
                 }
-                for arr in a1.iter().copied().zip(a2.iter().copied()).array_chunks::<8>() {
+                for arr in a1
+                    .iter()
+                    .copied()
+                    .zip(a2.iter().copied())
+                    .array_chunks::<8>()
+                {
                     for (x, y) in arr {
-                        dist = dist + (x-y).abs();
+                        dist = dist + (x - y).abs();
                     }
                 }
-            },
+            }
             LP::LINF => {
                 for (x, y) in a1[m..].iter().copied().zip(a2[m..].iter().copied()) {
-                    dist = dist.max((x-y).abs());
+                    dist = dist.max((x - y).abs());
                 }
-                for arr in a1.iter().copied().zip(a2.iter().copied()).array_chunks::<8>() {
+                for arr in a1
+                    .iter()
+                    .copied()
+                    .zip(a2.iter().copied())
+                    .array_chunks::<8>()
+                {
                     for (x, y) in arr {
-                        dist = dist.max((x-y).abs());
+                        dist = dist.max((x - y).abs());
                     }
                 }
-            },
+            }
         }
 
         dist
     }
 }
 
-pub struct LpKdtree<'a, T: Float + 'static, A:Copy> {
+pub struct LpKdtree<'a, T: Float + 'static, A: Copy> {
     dim: usize,
     // Nodes
     left: Option<Box<LpKdtree<'a, T, A>>>,
@@ -57,14 +65,17 @@ pub struct LpKdtree<'a, T: Float + 'static, A:Copy> {
     // Data
     data: Option<&'a [Leaf<'a, T, A>]>, // Not none when this is a leaf
     //
-    lp: LP
+    lp: LP,
 }
 
 impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
-
     // Add method to create the tree by adding leaf elements one by one
 
-    pub fn from_leaves(data: &'a mut [Leaf<'a, T, A>], how: SplitMethod, lp:LP) -> Result<Self, String> {
+    pub fn from_leaves(
+        data: &'a mut [Leaf<'a, T, A>],
+        how: SplitMethod,
+        lp: LP,
+    ) -> Result<Self, String> {
         if data.is_empty() {
             return Err("Empty data.".into());
         }
@@ -77,7 +88,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
         data: &'a mut [Leaf<'a, T, A>],
         capacity: usize,
         how: SplitMethod,
-        lp: LP
+        lp: LP,
     ) -> Result<Self, String> {
         if data.is_empty() {
             return Err("Empty data.".into());
@@ -111,7 +122,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
         capacity: usize,
         depth: usize,
         how: SplitMethod,
-        lp: LP
+        lp: LP,
     ) -> Self {
         let n = data.len();
         let (min_bounds, max_bounds) = Self::find_bounds(data, depth, dim);
@@ -125,7 +136,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                 min_bounds: min_bounds,
                 max_bounds: max_bounds,
                 data: Some(data),
-                lp: lp
+                lp: lp,
             }
         } else {
             let axis = depth % dim;
@@ -170,7 +181,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                     capacity,
                     depth + 1,
                     how.clone(),
-                    lp.clone()
+                    lp.clone(),
                 ))),
                 right: Some(Box::new(Self::from_leaves_unchecked(
                     right,
@@ -178,14 +189,14 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                     capacity,
                     depth + 1,
                     how,
-                    lp.clone()
+                    lp.clone(),
                 ))),
                 split_axis: Some(axis),
                 split_axis_value: Some(split_axis_value),
                 min_bounds: min_bounds,
                 max_bounds: max_bounds,
                 data: None,
-                lp: lp
+                lp: lp,
             }
         }
     }
@@ -206,7 +217,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                         dist = dist + (point[i] - min_bounds[i]).abs();
                     }
                 }
-            },
+            }
             LP::LINF => {
                 for i in 0..point.len() {
                     if point[i] > max_bounds[i] {
@@ -215,7 +226,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                         dist = dist.max((point[i] - min_bounds[i]).abs());
                     }
                 }
-            },
+            }
         }
         dist
     }
@@ -243,23 +254,18 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                 if idx < top_k.len() {
                     if top_k.len() + 1 > k {
                         top_k.pop();
-                    } 
+                    }
                     top_k.insert(idx, nb);
                 } else if top_k.len() < k {
                     top_k.push(nb);
-                } 
+                }
             }
         }
         // You can find code comments in arkadia.rs
     }
 
     #[inline(always)]
-    fn update_nb_within(
-        &self,
-        neighbors: &mut Vec<NB<T, A>>,
-        point: ArrayView1<T>,
-        radius: T,
-    ) {
+    fn update_nb_within(&self, neighbors: &mut Vec<NB<T, A>>, point: ArrayView1<T>, radius: T) {
         // This is only called if is_leaf. Safe to unwrap.
         for element in self.data.unwrap().iter() {
             let y = element.row_vec;
@@ -273,8 +279,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
         }
     }
 
-
-    pub fn knn(&self, k: usize, point: ArrayView1<T>, epsilon:T) -> Option<Vec<NB<T, A>>> {
+    pub fn knn(&self, k: usize, point: ArrayView1<T>, epsilon: T) -> Option<Vec<NB<T, A>>> {
         if k == 0 || (point.len() != self.dim) || (point.iter().any(|x| !x.is_finite())) {
             None
         } else {
@@ -283,14 +288,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
             let mut pending = Vec::with_capacity(k + 1);
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                self.knn_one_step(
-                    &mut pending,
-                    &mut top_k,
-                    k,
-                    point,
-                    T::max_value(),
-                    epsilon
-                );
+                self.knn_one_step(&mut pending, &mut top_k, k, point, T::max_value(), epsilon);
             }
             Some(top_k)
         }
@@ -321,7 +319,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                     k,
                     point,
                     max_dist_bound,
-                    T::zero()
+                    T::zero(),
                 );
             }
             Some(top_k)
@@ -361,11 +359,8 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                 next
             };
 
-            let dist_to_box = self.closest_dist_to_box(
-                next.min_bounds.as_ref(),
-                next.max_bounds.as_ref(),
-                point,
-            ); // (min dist from the box to point, the next Tree)
+            let dist_to_box =
+                self.closest_dist_to_box(next.min_bounds.as_ref(), next.max_bounds.as_ref(), point); // (min dist from the box to point, the next Tree)
             if dist_to_box + epsilon < current_max {
                 pending.push((dist_to_box, next));
             }
@@ -434,11 +429,8 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
                 current = current.right.as_ref().unwrap().as_ref();
                 next
             };
-            let dist_to_box = self.closest_dist_to_box(
-                next.min_bounds.as_ref(),
-                next.max_bounds.as_ref(),
-                point,
-            ); // (the next Tree, min dist from the box to point)
+            let dist_to_box =
+                self.closest_dist_to_box(next.min_bounds.as_ref(), next.max_bounds.as_ref(), point); // (the next Tree, min dist from the box to point)
             if dist_to_box <= radius {
                 pending.push((dist_to_box, next));
             }
@@ -489,8 +481,7 @@ impl<'a, T: Float + 'static, A: Copy> LpKdtree<'a, T, A> {
     }
 }
 
-impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for LpKdtree<'a, T, A> {
-
+impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for LpKdtree<'a, T, A> {
     fn knn_leaf(&self, k: usize, leaf: impl KdLeaf<'a, T>, epsilon: T) -> Option<Vec<NB<T, A>>> {
         if k == 0 || (leaf.dim() != self.dim) || (leaf.is_not_finite()) {
             None
@@ -506,7 +497,7 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for LpKdtree<'a, T, A> {
                     k,
                     leaf.vec(),
                     T::max_value(),
-                    epsilon
+                    epsilon,
                 );
             }
             Some(top_k)
@@ -537,7 +528,7 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for LpKdtree<'a, T, A> {
                     k,
                     leaf.vec(),
                     max_dist_bound,
-                    T::zero()
+                    T::zero(),
                 );
             }
             Some(top_k)
@@ -559,12 +550,7 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for LpKdtree<'a, T, A> {
             let mut pending = Vec::with_capacity(32);
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                self.within_one_step(
-                    &mut pending,
-                    &mut neighbors,
-                    leaf.vec(),
-                    radius,
-                );
+                self.within_one_step(&mut pending, &mut neighbors, leaf.vec(), radius);
             }
             if sort {
                 neighbors.sort_unstable();
@@ -574,11 +560,7 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for LpKdtree<'a, T, A> {
         }
     }
 
-    fn within_leaf_count(
-        &self,
-        leaf: impl KdLeaf<'a, T>,
-        radius: T,
-    ) -> Option<u32> {
+    fn within_leaf_count(&self, leaf: impl KdLeaf<'a, T>, radius: T) -> Option<u32> {
         if radius <= T::zero() + T::epsilon() || (leaf.is_not_finite()) {
             None
         } else {
@@ -586,19 +568,14 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for LpKdtree<'a, T, A> {
             let mut cnt = 0u32;
             let mut pending = Vec::with_capacity(32);
             while !pending.is_empty() {
-                cnt += self.within_count_one_step(
-                    &mut pending,
-                    leaf.vec(),
-                    radius,
-                );
+                cnt += self.within_count_one_step(&mut pending, leaf.vec(), radius);
             }
             Some(cnt)
         }
     }
 }
 
-impl <'a, T:Float + Into<f64>> KNNRegressor<'a, T, f64> for LpKdtree<'a, T, f64> {}
-
+impl<'a, T: Float + Into<f64>> KNNRegressor<'a, T, f64> for LpKdtree<'a, T, f64> {}
 
 #[cfg(test)]
 mod tests {
@@ -606,11 +583,15 @@ mod tests {
     use ndarray::{arr1, Array1, Array2};
 
     fn l1_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
-        a1.iter().zip(a2.iter()).fold(0., |acc, (x, y)| acc + (x-y).abs())
+        a1.iter()
+            .zip(a2.iter())
+            .fold(0., |acc, (x, y)| acc + (x - y).abs())
     }
 
     fn linf_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
-        a1.iter().zip(a2.iter()).fold(0., |acc, (x, y)| acc.max((x - y).abs()))
+        a1.iter()
+            .zip(a2.iter())
+            .fold(0., |acc, (x, y)| acc.max((x - y).abs()))
     }
 
     fn random_10d_rows() -> [f64; 10] {
@@ -619,7 +600,6 @@ mod tests {
 
     #[test]
     fn test_l1() {
-
         let l1 = LP::L1;
         for _ in 0..100 {
             let v1 = random_10d_rows();
@@ -634,7 +614,6 @@ mod tests {
 
     #[test]
     fn test_linf() {
-
         let linf = LP::LINF;
         for _ in 0..100 {
             let v1 = random_10d_rows();
@@ -773,7 +752,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_10d_knn_l1_dist_midpoint() {
         // 10 nearest neighbors, matrix of size 1000 x 10
@@ -899,5 +877,4 @@ mod tests {
             assert!((d1 - d2).abs() < 1e-10);
         }
     }
-
 }

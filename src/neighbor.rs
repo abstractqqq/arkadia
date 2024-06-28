@@ -7,7 +7,7 @@ pub struct NB<T: Float, A> {
     pub item: A,
 }
 
-impl <T:Float, A> NB<T, A> {
+impl<T: Float, A> NB<T, A> {
     pub fn to_item(self) -> A {
         self.item
     }

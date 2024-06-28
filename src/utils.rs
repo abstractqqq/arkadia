@@ -1,5 +1,5 @@
-use ndarray::ArrayView2;
 use crate::leaf::{Leaf, LeafWithNorm};
+use ndarray::ArrayView2;
 use num::Float;
 
 // ---
@@ -11,7 +11,6 @@ pub enum SplitMethod {
     MEAN,
     MEDIAN,
 }
-
 
 // ---
 

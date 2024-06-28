@@ -1,8 +1,11 @@
+use crate::{
+    leaf::{KdLeaf, LeafWithNorm},
+    KNNRegressor, SplitMethod, KDTQ, NB,
+};
 use ndarray::ArrayView1;
 use num::Float;
-use crate::{leaf::{KdLeaf, LeafWithNorm}, KNNRegressor, SplitMethod, KDTQ, NB};
 
-pub struct Kdtree<'a, T: Float + 'static, A:Copy> {
+pub struct Kdtree<'a, T: Float + 'static, A: Copy> {
     dim: usize,
     // Nodes
     left: Option<Box<Kdtree<'a, T, A>>>,
@@ -17,10 +20,12 @@ pub struct Kdtree<'a, T: Float + 'static, A:Copy> {
 }
 
 impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
-
     // Add method to create the tree by adding leaf elements one by one
 
-    pub fn from_leaves(data: &'a mut [LeafWithNorm<'a, T, A>], how: SplitMethod) -> Result<Self, String> {
+    pub fn from_leaves(
+        data: &'a mut [LeafWithNorm<'a, T, A>],
+        how: SplitMethod,
+    ) -> Result<Self, String> {
         if data.is_empty() {
             return Err("Empty data.".into());
         }
@@ -148,7 +153,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     // Computes the distance from the closest potential point in box to P
     #[inline(always)]
     fn closest_dist_to_box(min_bounds: &[T], max_bounds: &[T], point: ArrayView1<T>) -> T {
-
         let mut dist = T::zero();
         for i in 0..point.len() {
             if point[i] > max_bounds[i] {
@@ -223,8 +227,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         }
     }
 
-
-    pub fn knn(&self, k: usize, point: ArrayView1<T>, epsilon:T) -> Option<Vec<NB<T, A>>> {
+    pub fn knn(&self, k: usize, point: ArrayView1<T>, epsilon: T) -> Option<Vec<NB<T, A>>> {
         if k == 0 || (point.len() != self.dim) || (point.iter().any(|x| !x.is_finite())) {
             None
         } else {
@@ -241,7 +244,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     point,
                     point_norm,
                     T::max_value(),
-                    epsilon
+                    epsilon,
                 );
             }
             Some(top_k)
@@ -275,7 +278,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     point,
                     point_norm,
                     max_dist_bound,
-                    T::zero()
+                    T::zero(),
                 );
             }
             Some(top_k)
@@ -442,7 +445,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     }
 }
 
-impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
+impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
     fn knn_leaf(&self, k: usize, leaf: impl KdLeaf<'a, T>, epsilon: T) -> Option<Vec<NB<T, A>>> {
         if k == 0 || (leaf.dim() != self.dim) || (leaf.is_not_finite()) {
             None
@@ -459,7 +462,7 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
                     leaf.vec(),
                     leaf.norm(),
                     T::max_value(),
-                    epsilon
+                    epsilon,
                 );
             }
             Some(top_k)
@@ -491,7 +494,7 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
                     leaf.vec(),
                     leaf.norm(),
                     max_dist_bound,
-                    T::zero()
+                    T::zero(),
                 );
             }
             Some(top_k)
@@ -529,11 +532,7 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
         }
     }
 
-    fn within_leaf_count(
-        &self,
-        leaf: impl KdLeaf<'a, T>,
-        radius: T,
-    ) -> Option<u32> {
+    fn within_leaf_count(&self, leaf: impl KdLeaf<'a, T>, radius: T) -> Option<u32> {
         if radius <= T::zero() + T::epsilon() || (leaf.is_not_finite()) {
             None
         } else {
@@ -541,19 +540,14 @@ impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
             let mut cnt = 0u32;
             let mut pending = Vec::with_capacity(32);
             while !pending.is_empty() {
-                cnt += Self::within_count_one_step(
-                    &mut pending,
-                    leaf.vec(),
-                    leaf.norm(),
-                    radius,
-                );
+                cnt += Self::within_count_one_step(&mut pending, leaf.vec(), leaf.norm(), radius);
             }
             Some(cnt)
         }
     }
 }
 
-impl <'a, T:Float + Into<f64>> KNNRegressor<'a, T, f64> for Kdtree<'a, T, f64> {}
+impl<'a, T: Float + Into<f64>> KNNRegressor<'a, T, f64> for Kdtree<'a, T, f64> {}
 
 #[cfg(test)]
 mod tests {

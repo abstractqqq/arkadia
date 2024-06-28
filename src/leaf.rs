@@ -7,13 +7,13 @@ pub struct LeafWithNorm<'a, T: Float + 'static, A: Copy> {
     pub norm: T,
 }
 
-impl <'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for LeafWithNorm<'a, T, A> {
+impl<'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for LeafWithNorm<'a, T, A> {
     fn from(value: (&A, ArrayView1<'a, T>)) -> Self {
         let arr = value.1;
         LeafWithNorm {
             item: value.0.clone(),
             row_vec: arr,
-            norm: arr.dot(&arr)
+            norm: arr.dot(&arr),
         }
     }
 }
@@ -23,7 +23,7 @@ pub struct Leaf<'a, T: Float, A: Copy> {
     pub row_vec: ArrayView1<'a, T>,
 }
 
-impl <'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for Leaf<'a, T, A> {
+impl<'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for Leaf<'a, T, A> {
     fn from(value: (&A, ArrayView1<'a, T>)) -> Self {
         Leaf {
             item: value.0.clone(),
@@ -32,22 +32,19 @@ impl <'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for Leaf<'a, T, A> {
     }
 }
 
-pub trait KdLeaf<'a, T:Float> {
-
+pub trait KdLeaf<'a, T: Float> {
     fn dim(&self) -> usize;
-    
-    fn is_finite(&self) -> bool;
-    
-    fn is_not_finite(&self) -> bool;
-    
-    fn vec(&self) -> ArrayView1<'a, T>;
-    
-    fn norm(&self) -> T;
 
+    fn is_finite(&self) -> bool;
+
+    fn is_not_finite(&self) -> bool;
+
+    fn vec(&self) -> ArrayView1<'a, T>;
+
+    fn norm(&self) -> T;
 }
 
-impl <'a, T: Float, A: Copy> KdLeaf<'a, T> for LeafWithNorm<'a, T, A> {
-
+impl<'a, T: Float, A: Copy> KdLeaf<'a, T> for LeafWithNorm<'a, T, A> {
     fn dim(&self) -> usize {
         self.row_vec.len()
     }
@@ -69,8 +66,7 @@ impl <'a, T: Float, A: Copy> KdLeaf<'a, T> for LeafWithNorm<'a, T, A> {
     }
 }
 
-impl <'a, T: Float, A: Copy> KdLeaf<'a, T> for Leaf<'a, T, A> {
-
+impl<'a, T: Float, A: Copy> KdLeaf<'a, T> for Leaf<'a, T, A> {
     fn dim(&self) -> usize {
         self.row_vec.len()
     }
