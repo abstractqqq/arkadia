@@ -1,8 +1,8 @@
 use ndarray::ArrayView1;
 use num::Float;
-use crate::{SplitMethod, NB, LeafElement};
+use crate::{leaf::{KdLeaf, LeafWithNorm}, KNNRegressor, SplitMethod, KDTQ, NB};
 
-pub struct Kdtree<'a, T: Float + 'static, A> {
+pub struct Kdtree<'a, T: Float + 'static, A:Copy> {
     dim: usize,
     // Nodes
     left: Option<Box<Kdtree<'a, T, A>>>,
@@ -13,21 +13,24 @@ pub struct Kdtree<'a, T: Float + 'static, A> {
     min_bounds: Vec<T>,
     max_bounds: Vec<T>,
     // Data
-    data: Option<&'a [LeafElement<'a, T, A>]>, // Not none when this is a leaf
+    data: Option<&'a [LeafWithNorm<'a, T, A>]>, // Not none when this is a leaf
 }
 
 impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
-    pub fn build(data: &'a mut [LeafElement<'a, T, A>], how: SplitMethod) -> Result<Self, String> {
+
+    // Add method to create the tree by adding leaf elements one by one
+
+    pub fn from_leaves(data: &'a mut [LeafWithNorm<'a, T, A>], how: SplitMethod) -> Result<Self, String> {
         if data.is_empty() {
             return Err("Empty data.".into());
         }
         let dim = data.last().unwrap().dim();
         let capacity = crate::utils::suggest_capacity(dim);
-        Ok(Self::build_unchecked(data, dim, capacity, 0, how))
+        Ok(Self::from_leaves_unchecked(data, dim, capacity, 0, how))
     }
 
     pub fn with_capacity(
-        data: &'a mut [LeafElement<'a, T, A>],
+        data: &'a mut [LeafWithNorm<'a, T, A>],
         capacity: usize,
         how: SplitMethod,
     ) -> Result<Self, String> {
@@ -39,10 +42,10 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             return Err("Zero capacity.".into());
         }
 
-        Ok(Self::build_unchecked(data, dim, capacity, 0, how))
+        Ok(Self::from_leaves_unchecked(data, dim, capacity, 0, how))
     }
 
-    fn find_bounds(data: &[LeafElement<'a, T, A>], depth: usize, dim: usize) -> (Vec<T>, Vec<T>) {
+    fn find_bounds(data: &[LeafWithNorm<'a, T, A>], depth: usize, dim: usize) -> (Vec<T>, Vec<T>) {
         let mut min_bounds = vec![T::max_value(); dim];
         let mut max_bounds = vec![T::min_value(); dim];
         if depth == 0 {
@@ -58,8 +61,8 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         }
     }
 
-    fn build_unchecked(
-        data: &'a mut [LeafElement<'a, T, A>],
+    fn from_leaves_unchecked(
+        data: &'a mut [LeafWithNorm<'a, T, A>],
         dim: usize,
         capacity: usize,
         depth: usize,
@@ -115,14 +118,14 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             let (left, right) = data.split_at_mut(split_idx);
             Kdtree {
                 dim: dim,
-                left: Some(Box::new(Self::build_unchecked(
+                left: Some(Box::new(Self::from_leaves_unchecked(
                     left,
                     dim,
                     capacity,
                     depth + 1,
                     how.clone(),
                 ))),
-                right: Some(Box::new(Self::build_unchecked(
+                right: Some(Box::new(Self::from_leaves_unchecked(
                     right,
                     dim,
                     capacity,
@@ -142,8 +145,8 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         self.data.is_some()
     }
 
-    #[inline(always)]
     // Computes the distance from the closest potential point in box to P
+    #[inline(always)]
     fn closest_dist_to_box(min_bounds: &[T], max_bounds: &[T], point: ArrayView1<T>) -> T {
 
         let mut dist = T::zero();
@@ -170,10 +173,10 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         // This is only called if is_leaf. Safe to unwrap.
         for element in self.data.unwrap().iter() {
             let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(max_dist_bound);
-            let y = element.row_vec;
+            let y = element.vec();
             // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
             let dot_product = y.dot(&point);
-            let dist = point_norm_cache + element.norm - dot_product - dot_product;
+            let dist = point_norm_cache + element.norm() - dot_product - dot_product;
 
             if dist < cur_max_dist || (top_k.len() < k && dist <= max_permissible_dist) {
                 let nb = NB {
@@ -206,11 +209,11 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     ) {
         // This is only called if is_leaf. Safe to unwrap.
         for element in self.data.unwrap().iter() {
-            let y = element.row_vec;
+            let y = element.vec();
             // This hack actually produces faster Euclidean dist calculation (because .dot is unrolled in ndarray)
             // But usually this comes with 1-e12 precision lost
             let dot_product = y.dot(&point);
-            let dist = point_norm_cache + element.norm - dot_product - dot_product;
+            let dist = point_norm_cache + element.norm() - dot_product - dot_product;
             if dist <= radius {
                 neighbors.push(NB {
                     dist: dist,
@@ -245,34 +248,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         }
     }
 
-    pub fn knn_leaf_elem(
-        &self,
-        k: usize,
-        leaf_element: LeafElement<'a, T, A>,
-        epsilon: T
-    ) -> Option<Vec<NB<T, A>>> {
-        if k == 0 || (leaf_element.dim() != self.dim) || (leaf_element.is_not_finite()) {
-            None
-        } else {
-            // Always allocate 1 more.
-            let mut top_k = Vec::with_capacity(k + 1);
-            let mut pending = Vec::with_capacity(k + 1);
-            pending.push((T::min_value(), self));
-            while !pending.is_empty() {
-                Self::knn_one_step(
-                    &mut pending,
-                    &mut top_k,
-                    k,
-                    leaf_element.row_vec,
-                    leaf_element.norm,
-                    T::max_value(),
-                    epsilon
-                );
-            }
-            Some(top_k)
-        }
-    }
-
     // For bounded, epsilon is 0
     pub fn knn_bounded(
         &self,
@@ -299,38 +274,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                     k,
                     point,
                     point_norm,
-                    max_dist_bound,
-                    T::zero()
-                );
-            }
-            Some(top_k)
-        }
-    }
-
-    pub fn knn_bounded_leaf_elem(
-        &self,
-        k: usize,
-        leaf_element: LeafElement<'a, T, A>,
-        max_dist_bound: T,
-    ) -> Option<Vec<NB<T, A>>> {
-        if k == 0
-            || (leaf_element.dim() != self.dim)
-            || (leaf_element.is_not_finite())
-            || max_dist_bound <= T::zero() + T::epsilon()
-        {
-            None
-        } else {
-            // Always allocate 1 more.
-            let mut top_k = Vec::with_capacity(k + 1);
-            let mut pending = Vec::with_capacity(k + 1);
-            pending.push((T::min_value(), self));
-            while !pending.is_empty() {
-                Self::knn_one_step(
-                    &mut pending,
-                    &mut top_k,
-                    k,
-                    leaf_element.row_vec,
-                    leaf_element.norm,
                     max_dist_bound,
                     T::zero()
                 );
@@ -403,37 +346,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         }
     }
 
-    pub fn within_leaf_elem(
-        &self,
-        leaf_element: LeafElement<'a, T, A>,
-        radius: T,
-        sort: bool,
-    ) -> Option<Vec<NB<T, A>>> {
-        // radius is actually squared radius
-        if radius <= T::zero() + T::epsilon() || (leaf_element.is_not_finite()) {
-            None
-        } else {
-            // Always allocate some.
-            let mut neighbors = Vec::with_capacity(32);
-            let mut pending = Vec::with_capacity(32);
-            pending.push((T::min_value(), self));
-            while !pending.is_empty() {
-                Self::within_one_step(
-                    &mut pending,
-                    &mut neighbors,
-                    leaf_element.row_vec,
-                    leaf_element.norm,
-                    radius,
-                );
-            }
-            if sort {
-                neighbors.sort_unstable();
-            }
-            neighbors.shrink_to_fit();
-            Some(neighbors)
-        }
-    }
-
     pub fn within_count(&self, point: ArrayView1<T>, radius: T) -> Option<u32> {
         // radius is actually squared radius
         if radius <= T::zero() + T::epsilon() || (point.iter().any(|x| !x.is_finite())) {
@@ -446,29 +358,6 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
                 cnt += Self::within_count_one_step(&mut pending, point, point_norm, radius);
-            }
-            Some(cnt)
-        }
-    }
-
-    pub fn within_count_leaf_elem(
-        &self,
-        leaf_element: LeafElement<'a, T, A>,
-        radius: T,
-    ) -> Option<u32> {
-        if radius <= T::zero() + T::epsilon() || (leaf_element.is_not_finite()) {
-            None
-        } else {
-            // Always allocate some.
-            let mut cnt = 0u32;
-            let mut pending = Vec::with_capacity(32);
-            while !pending.is_empty() {
-                cnt += Self::within_count_one_step(
-                    &mut pending,
-                    leaf_element.row_vec,
-                    leaf_element.norm,
-                    radius,
-                );
             }
             Some(cnt)
         }
@@ -553,6 +442,119 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
     }
 }
 
+impl <'a, T: Float +'static, A:Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
+    fn knn_leaf(&self, k: usize, leaf: impl KdLeaf<'a, T>, epsilon: T) -> Option<Vec<NB<T, A>>> {
+        if k == 0 || (leaf.dim() != self.dim) || (leaf.is_not_finite()) {
+            None
+        } else {
+            // Always allocate 1 more.
+            let mut top_k = Vec::with_capacity(k + 1);
+            let mut pending = Vec::with_capacity(k + 1);
+            pending.push((T::min_value(), self));
+            while !pending.is_empty() {
+                Self::knn_one_step(
+                    &mut pending,
+                    &mut top_k,
+                    k,
+                    leaf.vec(),
+                    leaf.norm(),
+                    T::max_value(),
+                    epsilon
+                );
+            }
+            Some(top_k)
+        }
+    }
+
+    fn knn_bounded_leaf(
+        &self,
+        k: usize,
+        leaf: impl KdLeaf<'a, T>,
+        max_dist_bound: T,
+    ) -> Option<Vec<NB<T, A>>> {
+        if k == 0
+            || (leaf.dim() != self.dim)
+            || (leaf.is_not_finite())
+            || max_dist_bound <= T::zero() + T::epsilon()
+        {
+            None
+        } else {
+            // Always allocate 1 more.
+            let mut top_k = Vec::with_capacity(k + 1);
+            let mut pending = Vec::with_capacity(k + 1);
+            pending.push((T::min_value(), self));
+            while !pending.is_empty() {
+                Self::knn_one_step(
+                    &mut pending,
+                    &mut top_k,
+                    k,
+                    leaf.vec(),
+                    leaf.norm(),
+                    max_dist_bound,
+                    T::zero()
+                );
+            }
+            Some(top_k)
+        }
+    }
+
+    fn within_leaf(
+        &self,
+        leaf: impl KdLeaf<'a, T>,
+        radius: T,
+        sort: bool,
+    ) -> Option<Vec<NB<T, A>>> {
+        // radius is actually squared radius
+        if radius <= T::zero() + T::epsilon() || (leaf.is_not_finite()) {
+            None
+        } else {
+            // Always allocate some.
+            let mut neighbors = Vec::with_capacity(32);
+            let mut pending = Vec::with_capacity(32);
+            pending.push((T::min_value(), self));
+            while !pending.is_empty() {
+                Self::within_one_step(
+                    &mut pending,
+                    &mut neighbors,
+                    leaf.vec(),
+                    leaf.norm(),
+                    radius,
+                );
+            }
+            if sort {
+                neighbors.sort_unstable();
+            }
+            neighbors.shrink_to_fit();
+            Some(neighbors)
+        }
+    }
+
+    fn within_leaf_count(
+        &self,
+        leaf: impl KdLeaf<'a, T>,
+        radius: T,
+    ) -> Option<u32> {
+        if radius <= T::zero() + T::epsilon() || (leaf.is_not_finite()) {
+            None
+        } else {
+            // Always allocate some.
+            let mut cnt = 0u32;
+            let mut pending = Vec::with_capacity(32);
+            while !pending.is_empty() {
+                cnt += Self::within_count_one_step(
+                    &mut pending,
+                    leaf.vec(),
+                    leaf.norm(),
+                    radius,
+                );
+            }
+            Some(cnt)
+        }
+    }
+}
+
+impl <'a, T:Float + Into<f64>> KNNRegressor<'a, T, f64> for Kdtree<'a, T, f64> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,9 +590,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.knn(k, point.view(), 0f64);
 
@@ -637,9 +639,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.knn_bounded(k, point.view(), bound);
 
@@ -686,9 +688,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.within(point.view(), bound, true);
 
@@ -733,9 +735,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.within_count(point.view(), bound);
 
@@ -769,9 +771,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MEAN).unwrap();
+        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MEAN).unwrap();
 
         let output = tree.knn(k, point.view(), 0f64);
 
@@ -811,9 +813,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaf_elements(&binding, &values);
+        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::build(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
+        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
 
         let output = tree.knn(k, point.view(), 0f64);
 

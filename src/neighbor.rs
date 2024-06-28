@@ -1,10 +1,24 @@
-use num::Float;
-
 /// NB: Neighbor, search result
 /// (Data, and distance)
+use num::Float;
+
 pub struct NB<T: Float, A> {
     pub dist: T,
     pub item: A,
+}
+
+impl <T:Float, A> NB<T, A> {
+    pub fn to_item(self) -> A {
+        self.item
+    }
+
+    pub fn to_pair(self) -> (T, A) {
+        (self.dist, self.item)
+    }
+    /// Is the neighbor almost equal to the point itself?
+    pub fn identity(&self) -> bool {
+        self.dist <= T::epsilon()
+    }
 }
 
 impl<T: Float, A> PartialEq for NB<T, A> {

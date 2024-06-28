@@ -1,5 +1,5 @@
 use ndarray::ArrayView2;
-use crate::leaf_element::LeafElement;
+use crate::leaf::{Leaf, LeafWithNorm};
 use num::Float;
 
 // ---
@@ -11,6 +11,7 @@ pub enum SplitMethod {
     MEAN,
     MEDIAN,
 }
+
 
 // ---
 
@@ -30,35 +31,24 @@ pub fn suggest_capacity(dim: usize) -> usize {
     }
 }
 
-pub fn matrix_to_leaf_elements<'a, T: Float + 'static, A: Copy>(
+pub fn matrix_to_leaves_w_norm<'a, T: Float + 'static, A: Copy>(
     matrix: &'a ArrayView2<'a, T>,
     values: &'a [A],
-) -> Vec<LeafElement<'a, T, A>> {
+) -> Vec<LeafWithNorm<'a, T, A>> {
     values
         .iter()
         .zip(matrix.rows().into_iter())
-        .filter(|(_, arr)| arr.iter().all(|x| x.is_finite()))
-        .map(|(a, arr)| LeafElement {
-            item: a.clone(),
-            row_vec: arr,
-            norm: arr.dot(&arr),
-        })
+        .map(|pair| pair.into())
         .collect::<Vec<_>>()
 }
 
-pub fn matrix_to_leaf_elements_no_norm<'a, T: Float + 'static, A: Copy>(
+pub fn matrix_to_leaves<'a, T: Float + 'static, A: Copy>(
     matrix: &'a ArrayView2<'a, T>,
     values: &'a [A],
-) -> Vec<LeafElement<'a, T, A>> {
+) -> Vec<Leaf<'a, T, A>> {
     values
         .iter()
         .zip(matrix.rows().into_iter())
-        .filter(|(_, arr)| arr.iter().all(|x| x.is_finite()))
-        .map(|(a, arr)| LeafElement {
-            item: a.clone(),
-            row_vec: arr,
-            norm:  T::nan() // Don't compute. This won't be used. 
-            // arr.iter().fold(T::zero(), |acc, x| acc.max(x.abs())),
-        })
+        .map(|pair| pair.into())
         .collect::<Vec<_>>()
 }
