@@ -1,4 +1,3 @@
-#![feature(iter_array_chunks)]
 /// IMPORTANT!
 /// This crate is intentionally built to be imperfect.
 /// E.g.
@@ -35,8 +34,18 @@ pub enum KNNMethod {
     NoW, // No Weight
 }
 
+impl From<bool> for KNNMethod {
+    fn from(weighted: bool) -> Self {
+        if weighted {
+            KNNMethod::DInvW
+        } else {
+            KNNMethod::NoW
+        }
+    }
+}
+
 /// KD Tree Queries
-pub trait KDTQ<'a, T: Float, A> {
+pub trait KDTQ<'a, T: Float + 'static, A> {
     fn knn_leaf(&self, k: usize, leaf: impl KdLeaf<'a, T>, epsilon: T) -> Option<Vec<NB<T, A>>>;
 
     fn knn_bounded_leaf(
@@ -50,9 +59,28 @@ pub trait KDTQ<'a, T: Float, A> {
         -> Option<Vec<NB<T, A>>>;
 
     fn within_leaf_count(&self, leaf: impl KdLeaf<'a, T>, radius: T) -> Option<u32>;
+
+    // Helper function that finds the bounding box for each (sub)kdtree
+    fn find_bounds(data: &[impl KdLeaf<'a, T>], depth: usize, dim: usize) -> (Vec<T>, Vec<T>) {
+        let mut min_bounds = vec![T::max_value(); dim];
+        let mut max_bounds = vec![T::min_value(); dim];
+        if depth == 0 {
+            (min_bounds, max_bounds)
+        } else {
+            for elem in data.iter() {
+                for i in 0..dim {
+                    min_bounds[i] = min_bounds[i].min(elem.vec()[i]);
+                    max_bounds[i] = max_bounds[i].max(elem.vec()[i]);
+                }
+            }
+            (min_bounds, max_bounds)
+        }
+    }
 }
 
-pub trait KNNRegressor<'a, T: Float + Into<f64>, A: Float + Into<f64>>: KDTQ<'a, T, A> {
+pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:
+    KDTQ<'a, T, A>
+{
     fn knn_regress(
         &self,
         k: usize,
@@ -91,8 +119,8 @@ pub trait KNNRegressor<'a, T: Float + Into<f64>, A: Float + Into<f64>>: KDTQ<'a,
     }
 }
 
-pub trait KNNClassifier<'a, T: Float>: KDTQ<'a, T, u32> {
-    fn knn_regress(
+pub trait KNNClassifier<'a, T: Float + 'static>: KDTQ<'a, T, u32> {
+    fn knn_classif(
         &self,
         k: usize,
         leaf: impl KdLeaf<'a, T>,

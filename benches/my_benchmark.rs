@@ -7,7 +7,8 @@ use ndarray::{arr1, Array1, Array2};
 
 fn linf_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
     a1.iter()
-        .zip(a2.iter())
+        .copied()
+        .zip(a2.iter().copied())
         .fold(0., |acc, (x, y)| acc.max((x - y).abs()))
 }
 
@@ -45,6 +46,7 @@ fn knn_queries_3d(c: &mut Criterion) {
     )
     .unwrap();
 
+    // suggest_capacity(dim)
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
         let sl = row.to_slice().unwrap();
@@ -63,7 +65,7 @@ fn knn_queries_3d(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries (3D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view(), 0f64);
+                let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
             }
         })
     });
@@ -102,7 +104,7 @@ fn knn_queries_5d(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries (5D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view(), 0f64);
+                let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
             }
         })
     });
@@ -145,7 +147,7 @@ fn knn_queries_5d_linf(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries with L Inf dist (5D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view(), 0f64);
+                let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
             }
         })
     });
@@ -184,7 +186,7 @@ fn knn_queries_10d(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries (10D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view(), 0f64);
+                let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
             }
         })
     });
@@ -227,7 +229,7 @@ fn knn_queries_10d_linf(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 10NN queries with L Inf dist (10D)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.knn(k, rv.view(), 0f64);
+                let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
             }
         })
     });
@@ -246,7 +248,7 @@ fn within_queries(c: &mut Criterion) {
     )
     .unwrap();
 
-    let mut kd_tree = kd::KdTree::with_capacity(5, 16);
+    let mut kd_tree = kd::KdTree::with_capacity(5, suggest_capacity(5));
     for (i, row) in matrix.rows().into_iter().enumerate() {
         let sl = row.to_slice().unwrap();
         let _ = kd_tree.add(sl, i);
@@ -264,7 +266,7 @@ fn within_queries(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 within radius queries (sorted)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.within(rv.view(), 0.29, true);
+                let _ = tree.within(rv.as_slice().unwrap(), 0.29, true);
             }
         })
     });
@@ -272,7 +274,7 @@ fn within_queries(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 within radius queries (unsorted)", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.within(rv.view(), 0.29, false);
+                let _ = tree.within(rv.as_slice().unwrap(), 0.29, false);
             }
         })
     });
@@ -291,7 +293,7 @@ fn within_count_queries(c: &mut Criterion) {
     )
     .unwrap();
 
-    let mut kd_tree = kd::KdTree::with_capacity(5, 16);
+    let mut kd_tree = kd::KdTree::with_capacity(5, suggest_capacity(5));
     for (i, row) in matrix.rows().into_iter().enumerate() {
         let sl = row.to_slice().unwrap();
         let _ = kd_tree.add(sl, i);
@@ -300,7 +302,7 @@ fn within_count_queries(c: &mut Criterion) {
     c.bench_function("ARKaDia 200 within radius count queries", |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = tree.within_count(rv.view(), 0.29);
+                let _ = tree.within_count(rv.as_slice().unwrap(), 0.29);
             }
         })
     });
@@ -308,12 +310,12 @@ fn within_count_queries(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    knn_queries_3d,
-    knn_queries_5d,
+    // knn_queries_3d,
+    // knn_queries_5d,
     knn_queries_5d_linf,
     knn_queries_10d_linf,
-    knn_queries_10d,
-    within_queries,
-    within_count_queries
+    // knn_queries_10d,
+    // within_queries,
+    // within_count_queries
 );
 criterion_main!(benches);
