@@ -1,9 +1,16 @@
+/// Norm cached KDT
+/// Currently this is slower than AnyKDT with DIST::SQL2.
+/// The reason is not fully understood. One hypothesis is that doing math is already so quick that
+/// caching the norm to save a few flops doesn't matter. A simpler leaf structure (without norm) might
+/// be easier to work with. I don't pretend to know why.. How is the code compiled? 
 use crate::{
     leaf::{KdLeaf, LeafWithNorm},
-    KNNRegressor, SplitMethod, KDTQ, NB,
+    suggest_capacity, SplitMethod, KDTQ, NB,
 };
 use ndarray::ArrayView1;
 use num::Float;
+
+// We can also include cosine distance here because the norm trick works too
 
 #[inline(always)]
 pub fn squared_l2<T: Float + 'static>(a: &[T], b: &[T], a_norm: T, b_norm: T) -> T {
@@ -13,11 +20,11 @@ pub fn squared_l2<T: Float + 'static>(a: &[T], b: &[T], a_norm: T, b_norm: T) ->
     a_norm + b_norm - dot - dot
 }
 
-pub struct Kdtree<'a, T: Float + 'static, A: Copy> {
+pub struct KDT<'a, T: Float + 'static, A> {
     dim: usize,
     // Nodes
-    left: Option<Box<Kdtree<'a, T, A>>>,
-    right: Option<Box<Kdtree<'a, T, A>>>,
+    left: Option<Box<KDT<'a, T, A>>>,
+    right: Option<Box<KDT<'a, T, A>>>,
     // Is a leaf node if this has values
     split_axis: Option<usize>,
     split_axis_value: Option<T>,
@@ -27,7 +34,7 @@ pub struct Kdtree<'a, T: Float + 'static, A: Copy> {
     data: Option<&'a [LeafWithNorm<'a, T, A>]>, // Not none when this is a leaf
 }
 
-impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
+impl<'a, T: Float + 'static, A: Copy> KDT<'a, T, A> {
     // Add method to create the tree by adding leaf elements one by one
 
     pub fn from_leaves(
@@ -37,9 +44,14 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         if data.is_empty() {
             return Err("Empty data.".into());
         }
-        let dim = data.last().unwrap().dim();
-        let capacity = crate::utils::suggest_capacity(dim);
-        Ok(Self::from_leaves_unchecked(data, dim, capacity, 0, how))
+        let dim = data[0].dim();
+        Ok(Self::from_leaves_unchecked(
+            data,
+            dim,
+            suggest_capacity(dim),
+            0,
+            how,
+        ))
     }
 
     pub fn with_capacity(
@@ -66,9 +78,9 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         how: SplitMethod,
     ) -> Self {
         let n = data.len();
-        let (min_bounds, max_bounds) = Self::find_bounds(data, depth, dim);
+        let (min_bounds, max_bounds) = Self::find_bounds(data, dim);
         if n <= capacity {
-            Kdtree {
+            KDT {
                 dim: dim,
                 left: None,
                 right: None,
@@ -83,57 +95,67 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             let (split_axis_value, split_idx) = match how {
                 SplitMethod::MIDPOINT => {
                     let midpoint = min_bounds[axis]
-                        + (max_bounds[axis] - min_bounds[axis]) / T::from(2.0).unwrap();
-                    data.sort_unstable_by(|l1, l2| {
-                        (l1.row_vec[axis] >= midpoint).cmp(&(l2.row_vec[axis] >= midpoint))
-                    }); // False <<< True. Now split by the first True location
-                    let split_idx = data.partition_point(|elem| elem.row_vec[axis] < midpoint); // first index of True. If it doesn't exist, all points goes into left
+                        + (max_bounds[axis] - min_bounds[axis]) / (T::one() + T::one());
+                    data.sort_unstable_by_key(|leaf| leaf.value_at(axis) >= midpoint);
+                    let split_idx = data.partition_point(|elem| elem.value_at(axis) < midpoint); // first index of True. If it doesn't exist, all points goes into left
                     (midpoint, split_idx)
                 }
                 SplitMethod::MEAN => {
                     let mut sum = T::zero();
                     for row in data.iter() {
-                        sum = sum + row.row_vec[axis];
+                        sum = sum + row.value_at(axis);
                     }
                     let mean = sum / T::from(n).unwrap();
-                    data.sort_unstable_by(|l1, l2| {
-                        (l1.row_vec[axis] >= mean).cmp(&(l2.row_vec[axis] >= mean))
-                    }); // False <<< True. Now split by the first True location
-                    let split_idx = data.partition_point(|elem| elem.row_vec[axis] < mean); // first index of True. If it doesn't exist, all points goes into left
+                    data.sort_unstable_by_key(|leaf| leaf.value_at(axis) >= mean);
+                    let split_idx = data.partition_point(|elem| elem.value_at(axis) < mean); // first index of True. If it doesn't exist, all points goes into left
                     (mean, split_idx)
                 }
                 SplitMethod::MEDIAN => {
                     data.sort_unstable_by(|l1, l2| {
-                        l1.row_vec[axis].partial_cmp(&l2.row_vec[axis]).unwrap()
+                        l1.value_at(axis).partial_cmp(&l2.value_at(axis)).unwrap()
                     }); // False <<< True. Now split by the first True location
                     let half = n >> 1;
-                    let split_value = data[half].row_vec[axis];
+                    let split_value = data[half].value_at(axis);
                     (split_value, half)
                 }
             };
 
             let (left, right) = data.split_at_mut(split_idx);
-            Kdtree {
-                dim: dim,
-                left: Some(Box::new(Self::from_leaves_unchecked(
-                    left,
-                    dim,
-                    capacity,
-                    depth + 1,
-                    how.clone(),
-                ))),
-                right: Some(Box::new(Self::from_leaves_unchecked(
-                    right,
-                    dim,
-                    capacity,
-                    depth + 1,
-                    how,
-                ))),
-                split_axis: Some(axis),
-                split_axis_value: Some(split_axis_value),
-                min_bounds: min_bounds,
-                max_bounds: max_bounds,
-                data: None,
+            if left.is_empty() {
+                // See comment in arkadia_any.rs
+                KDT {
+                    dim: dim,
+                    left: None,
+                    right: None,
+                    split_axis: None,
+                    split_axis_value: None,
+                    min_bounds: min_bounds,
+                    max_bounds: max_bounds,
+                    data: Some(right),
+                }
+            } else {
+                KDT {
+                    dim: dim,
+                    left: Some(Box::new(Self::from_leaves_unchecked(
+                        left,
+                        dim,
+                        capacity,
+                        depth + 1,
+                        how.clone(),
+                    ))),
+                    right: Some(Box::new(Self::from_leaves_unchecked(
+                        right,
+                        dim,
+                        capacity,
+                        depth + 1,
+                        how,
+                    ))),
+                    split_axis: Some(axis),
+                    split_axis_value: Some(split_axis_value),
+                    min_bounds: min_bounds,
+                    max_bounds: max_bounds,
+                    data: None,
+                }
             }
         }
     }
@@ -213,64 +235,17 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
             }
         }
     }
+}
 
-    pub fn knn(&self, k: usize, point: &[T], epsilon: T) -> Option<Vec<NB<T, A>>> {
-        if k == 0 || (point.len() != self.dim) || (point.iter().any(|x| !x.is_finite())) {
-            None
-        } else {
-            // Always allocate 1 more.
-            let mut top_k = Vec::with_capacity(k + 1);
-            let mut pending = Vec::with_capacity(k + 1);
-            pending.push((T::min_value(), self));
-            let p_arr = ArrayView1::from(point);
-            let point_norm = p_arr.dot(&p_arr);
-            while !pending.is_empty() {
-                Self::knn_one_step(
-                    &mut pending,
-                    &mut top_k,
-                    k,
-                    point,
-                    point_norm,
-                    T::max_value(),
-                    epsilon,
-                );
-            }
-            Some(top_k)
-        }
+impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for KDT<'a, T, A> {
+    fn dim(&self) -> usize {
+        self.dim
     }
 
-    // For bounded, epsilon is 0
-    pub fn knn_bounded(&self, k: usize, point: &[T], max_dist_bound: T) -> Option<Vec<NB<T, A>>> {
-        if k == 0
-            || (point.len() != self.dim)
-            || (point.iter().any(|x| !x.is_finite()))
-            || max_dist_bound <= T::zero() + T::epsilon()
-        {
-            None
-        } else {
-            // Always allocate 1 more.
-            let mut top_k = Vec::with_capacity(k + 1);
-            let mut pending = Vec::with_capacity(k + 1);
-            pending.push((T::min_value(), self));
-            let p_arr = ArrayView1::from(point);
-            let point_norm = p_arr.dot(&p_arr);
-            while !pending.is_empty() {
-                Self::knn_one_step(
-                    &mut pending,
-                    &mut top_k,
-                    k,
-                    point,
-                    point_norm,
-                    max_dist_bound,
-                    T::zero(),
-                );
-            }
-            Some(top_k)
-        }
-    }
-
-    pub fn knn_one_step(
-        pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
+    #[inline(always)]
+    fn knn_one_step(
+        &self,
+        pending: &mut Vec<(T, &KDT<'a, T, A>)>,
         top_k: &mut Vec<NB<T, A>>,
         k: usize,
         point: &[T],
@@ -304,7 +279,7 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
                 next.min_bounds.as_ref(),
                 next.max_bounds.as_ref(),
                 point,
-            ); // (the next Tree, min dist from the box to point)
+            ); // (min dist from the box to point, the next Tree)
             if dist_to_box + epsilon < current_max {
                 pending.push((dist_to_box, next));
             }
@@ -312,48 +287,53 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         current.update_top_k(top_k, k, point, point_norm_cache, max_dist_bound);
     }
 
-    pub fn within(&self, point: &[T], radius: T, sort: bool) -> Option<Vec<NB<T, A>>> {
-        // radius is actually squared radius
-        if radius <= T::zero() + T::epsilon() || (point.iter().any(|x| !x.is_finite())) {
-            None
+    #[inline(always)]
+    fn within_count_one_step(
+        &self,
+        pending: &mut Vec<(T, &KDT<'a, T, A>)>,
+        point: &[T],
+        point_norm_cache: T,
+        radius: T,
+    ) -> u32 {
+        let (dist_to_box, tree) = pending.pop().unwrap(); // safe
+        if dist_to_box > radius {
+            0
         } else {
-            // Always allocate some.
-            let mut neighbors = Vec::with_capacity(32);
-            let mut pending = Vec::with_capacity(32);
-            let p_arr = ArrayView1::from(point);
-            let point_norm = p_arr.dot(&p_arr);
-            pending.push((T::min_value(), self));
-            while !pending.is_empty() {
-                Self::within_one_step(&mut pending, &mut neighbors, point, point_norm, radius);
+            let mut current = tree;
+            while !current.is_leaf() {
+                let split_axis = current.split_axis.unwrap();
+                let axis_value = current.split_axis_value.unwrap();
+                let next = if point[split_axis] < axis_value {
+                    let next = current.right.as_ref().unwrap().as_ref();
+                    current = current.left.as_ref().unwrap().as_ref();
+                    next
+                } else {
+                    let next = current.left.as_ref().unwrap().as_ref();
+                    current = current.right.as_ref().unwrap().as_ref();
+                    next
+                };
+                let dist_to_box = Self::closest_dist_to_box(
+                    next.min_bounds.as_ref(),
+                    next.max_bounds.as_ref(),
+                    point,
+                ); // (min dist from the box to point, the next Tree)
+                if dist_to_box <= radius {
+                    pending.push((dist_to_box, next));
+                }
             }
-            if sort {
-                neighbors.sort_unstable();
-            }
-            neighbors.shrink_to_fit();
-            Some(neighbors)
+            // Return the count in current
+            current.data.unwrap().iter().fold(0u32, |acc, element| {
+                let y = element.vec();
+                let dist = squared_l2(y, point, element.norm(), point_norm_cache);
+                acc + (dist <= radius) as u32
+            })
         }
     }
 
-    pub fn within_count(&self, point: &[T], radius: T) -> Option<u32> {
-        // radius is actually squared radius
-        if radius <= T::zero() + T::epsilon() || (point.iter().any(|x| !x.is_finite())) {
-            None
-        } else {
-            // Always allocate some.
-            let mut cnt = 0u32;
-            let mut pending = Vec::with_capacity(32);
-            let p_arr = ArrayView1::from(point);
-            let point_norm = p_arr.dot(&p_arr);
-            pending.push((T::min_value(), self));
-            while !pending.is_empty() {
-                cnt += Self::within_count_one_step(&mut pending, point, point_norm, radius);
-            }
-            Some(cnt)
-        }
-    }
-
+    #[inline(always)]
     fn within_one_step(
-        pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
+        &self,
+        pending: &mut Vec<(T, &KDT<'a, T, A>)>,
         neighbors: &mut Vec<NB<T, A>>,
         point: &[T],
         point_norm_cache: T,
@@ -388,64 +368,23 @@ impl<'a, T: Float + 'static, A: Copy> Kdtree<'a, T, A> {
         current.update_nb_within(neighbors, point, point_norm_cache, radius);
     }
 
-    fn within_count_one_step(
-        pending: &mut Vec<(T, &Kdtree<'a, T, A>)>,
-        point: &[T],
-        point_norm_cache: T,
-        radius: T,
-    ) -> u32 {
-        let (dist_to_box, tree) = pending.pop().unwrap(); // safe
-        if dist_to_box > radius {
-            0
-        } else {
-            let mut current = tree;
-            while !current.is_leaf() {
-                let split_axis = current.split_axis.unwrap();
-                let axis_value = current.split_axis_value.unwrap();
-                let next = if point[split_axis] < axis_value {
-                    let next = current.right.as_ref().unwrap().as_ref();
-                    current = current.left.as_ref().unwrap().as_ref();
-                    next
-                } else {
-                    let next = current.left.as_ref().unwrap().as_ref();
-                    current = current.right.as_ref().unwrap().as_ref();
-                    next
-                };
-                let dist_to_box = Self::closest_dist_to_box(
-                    next.min_bounds.as_ref(),
-                    next.max_bounds.as_ref(),
-                    point,
-                ); // (the next Tree, min dist from the box to point)
-                if dist_to_box <= radius {
-                    pending.push((dist_to_box, next));
-                }
-            }
-            // Return the count in current
-            current.data.unwrap().iter().fold(0u32, |acc, element| {
-                let y = element.vec();
-                let dist = squared_l2(y, point, element.norm(), point_norm_cache);
-                acc + (dist <= radius) as u32
-            })
-        }
-    }
-}
-
-impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
-    fn knn_leaf(&self, k: usize, leaf: impl KdLeaf<'a, T>, epsilon: T) -> Option<Vec<NB<T, A>>> {
-        if k == 0 || (leaf.dim() != self.dim) || (leaf.is_not_finite()) {
+    fn knn(&self, k: usize, point: &[T], epsilon: T) -> Option<Vec<NB<T, A>>> {
+        if k == 0 || (point.len() != self.dim()) || (point.iter().any(|x| !x.is_finite())) {
             None
         } else {
             // Always allocate 1 more.
             let mut top_k = Vec::with_capacity(k + 1);
             let mut pending = Vec::with_capacity(k + 1);
             pending.push((T::min_value(), self));
+            let p_arr = ArrayView1::from(point);
+            let point_norm = p_arr.dot(&p_arr);
             while !pending.is_empty() {
-                Self::knn_one_step(
+                self.knn_one_step(
                     &mut pending,
                     &mut top_k,
                     k,
-                    leaf.vec(),
-                    leaf.norm(),
+                    point,
+                    point_norm,
                     T::max_value(),
                     epsilon,
                 );
@@ -454,15 +393,11 @@ impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
         }
     }
 
-    fn knn_bounded_leaf(
-        &self,
-        k: usize,
-        leaf: impl KdLeaf<'a, T>,
-        max_dist_bound: T,
-    ) -> Option<Vec<NB<T, A>>> {
+    // For bounded, epsilon is 0
+    fn knn_bounded(&self, k: usize, point: &[T], max_dist_bound: T) -> Option<Vec<NB<T, A>>> {
         if k == 0
-            || (leaf.dim() != self.dim)
-            || (leaf.is_not_finite())
+            || (point.len() != self.dim())
+            || (point.iter().any(|x| !x.is_finite()))
             || max_dist_bound <= T::zero() + T::epsilon()
         {
             None
@@ -471,13 +406,15 @@ impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
             let mut top_k = Vec::with_capacity(k + 1);
             let mut pending = Vec::with_capacity(k + 1);
             pending.push((T::min_value(), self));
+            let p_arr = ArrayView1::from(point);
+            let point_norm = p_arr.dot(&p_arr);
             while !pending.is_empty() {
-                Self::knn_one_step(
+                self.knn_one_step(
                     &mut pending,
                     &mut top_k,
                     k,
-                    leaf.vec(),
-                    leaf.norm(),
+                    point,
+                    point_norm,
                     max_dist_bound,
                     T::zero(),
                 );
@@ -486,28 +423,19 @@ impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
         }
     }
 
-    fn within_leaf(
-        &self,
-        leaf: impl KdLeaf<'a, T>,
-        radius: T,
-        sort: bool,
-    ) -> Option<Vec<NB<T, A>>> {
+    fn within(&self, point: &[T], radius: T, sort: bool) -> Option<Vec<NB<T, A>>> {
         // radius is actually squared radius
-        if radius <= T::zero() + T::epsilon() || (leaf.is_not_finite()) {
+        if radius <= T::zero() + T::epsilon() || (point.iter().any(|x| !x.is_finite())) {
             None
         } else {
             // Always allocate some.
             let mut neighbors = Vec::with_capacity(32);
             let mut pending = Vec::with_capacity(32);
+            let p_arr = ArrayView1::from(point);
+            let point_norm = p_arr.dot(&p_arr);
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                Self::within_one_step(
-                    &mut pending,
-                    &mut neighbors,
-                    leaf.vec(),
-                    leaf.norm(),
-                    radius,
-                );
+                self.within_one_step(&mut pending, &mut neighbors, point, point_norm, radius);
             }
             if sort {
                 neighbors.sort_unstable();
@@ -517,28 +445,36 @@ impl<'a, T: Float + 'static, A: Copy> KDTQ<'a, T, A> for Kdtree<'a, T, A> {
         }
     }
 
-    fn within_leaf_count(&self, leaf: impl KdLeaf<'a, T>, radius: T) -> Option<u32> {
-        if radius <= T::zero() + T::epsilon() || (leaf.is_not_finite()) {
+    fn within_count(&self, point: &[T], radius: T) -> Option<u32> {
+        // radius is actually squared radius
+        if radius <= T::zero() + T::epsilon() || (point.iter().any(|x| !x.is_finite())) {
             None
         } else {
             // Always allocate some.
             let mut cnt = 0u32;
             let mut pending = Vec::with_capacity(32);
+            let p_arr = ArrayView1::from(point);
+            let point_norm = p_arr.dot(&p_arr);
+            pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                cnt += Self::within_count_one_step(&mut pending, leaf.vec(), leaf.norm(), radius);
+                cnt += self.within_count_one_step(&mut pending, point, point_norm, radius);
             }
             Some(cnt)
         }
     }
 }
 
-impl<'a, T: Float + Into<f64>> KNNRegressor<'a, T, f64> for Kdtree<'a, T, f64> {}
-
 #[cfg(test)]
 mod tests {
+    use super::super::matrix_to_leaves_w_norm;
     use super::*;
-    use kdtree::distance::squared_euclidean;
     use ndarray::{arr1, Array2, ArrayView2};
+
+    pub fn squared_l2<T: Float + 'static>(a: &[T], b: &[T]) -> T {
+        a.iter()
+            .zip(b.iter())
+            .fold(T::zero(), |acc, (&a, &b)| acc + (a - b) * (a - b))
+    }
 
     fn random_10d_rows() -> [f64; 10] {
         rand::random()
@@ -577,13 +513,13 @@ mod tests {
         let point = arr1(&[0.5; 10]);
         // brute force test
         let (ans_argmins, ans_distances) =
-            generate_test_answer(mat.view(), point.view(), squared_euclidean::<f64>);
+            generate_test_answer(mat.view(), point.view(), squared_l2::<f64>);
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
+        let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = KDT::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.knn(k, point.as_slice().unwrap(), 0f64);
 
@@ -613,7 +549,7 @@ mod tests {
         let point = arr1(&[0.5; 10]);
         // brute force test
         let (ans_argmins, ans_distances) =
-            generate_test_answer(mat.view(), point.view(), squared_euclidean::<f64>);
+            generate_test_answer(mat.view(), point.view(), squared_l2::<f64>);
 
         let bound: f64 = 0.28; // usually random data will give min dist ~ 0.24, 0.25
         let idx = ans_distances.partition_point(|d| d < &bound);
@@ -624,9 +560,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
+        let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = KDT::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.knn_bounded(k, point.as_slice().unwrap(), bound);
 
@@ -658,7 +594,7 @@ mod tests {
         let point = arr1(&[0.5; 10]);
         // brute force test
         let (ans_argmins, ans_distances) =
-            generate_test_answer(mat.view(), point.view(), squared_euclidean::<f64>);
+            generate_test_answer(mat.view(), point.view(), squared_l2::<f64>);
 
         let bound: f64 = 0.29; // usually random data will give min dist ~ 0.24, 0.25
         let idx = ans_distances.partition_point(|d| d < &bound);
@@ -667,9 +603,9 @@ mod tests {
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
+        let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = KDT::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.within(point.as_slice().unwrap(), bound, true);
 
@@ -700,17 +636,16 @@ mod tests {
         let mat = mat.as_standard_layout().to_owned();
         let point = arr1(&[0.5; 10]);
         // brute force test
-        let (_, ans_distances) =
-            generate_test_answer(mat.view(), point.view(), squared_euclidean::<f64>);
+        let (_, ans_distances) = generate_test_answer(mat.view(), point.view(), squared_l2::<f64>);
 
         let bound: f64 = 0.29; // usually random data will give min dist ~ 0.24, 0.25
         let idx = ans_distances.partition_point(|d| d < &bound);
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
+        let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
+        let tree = KDT::from_leaves(&mut leaf_elements, SplitMethod::MIDPOINT).unwrap();
 
         let output = tree.within_count(point.as_slice().unwrap(), bound);
 
@@ -734,13 +669,13 @@ mod tests {
         let point = arr1(&[0.5; 10]);
         // brute force test
         let (ans_argmins, ans_distances) =
-            generate_test_answer(mat.view(), point.view(), squared_euclidean::<f64>);
+            generate_test_answer(mat.view(), point.view(), squared_l2::<f64>);
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
+        let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MEAN).unwrap();
+        let tree = KDT::from_leaves(&mut leaf_elements, SplitMethod::MEAN).unwrap();
 
         let output = tree.knn(k, point.as_slice().unwrap(), 0f64);
 
@@ -770,13 +705,13 @@ mod tests {
         let point = arr1(&[0.5; 10]);
         // brute force test
         let (ans_argmins, ans_distances) =
-            generate_test_answer(mat.view(), point.view(), squared_euclidean::<f64>);
+            generate_test_answer(mat.view(), point.view(), squared_l2::<f64>);
 
         let values = (0..rows).collect::<Vec<_>>();
         let binding = mat.view();
-        let mut leaf_elements = crate::utils::matrix_to_leaves_w_norm(&binding, &values);
+        let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
 
-        let tree = Kdtree::from_leaves(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
+        let tree = KDT::from_leaves(&mut leaf_elements, SplitMethod::MEDIAN).unwrap();
 
         let output = tree.knn(k, point.as_slice().unwrap(), 0f64);
 

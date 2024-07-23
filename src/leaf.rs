@@ -1,32 +1,34 @@
 use ndarray::ArrayView1;
 use num::Float;
 
-pub struct LeafWithNorm<'a, T: Float + 'static, A: Copy> {
+#[derive(Clone, Copy)]
+pub struct LeafWithNorm<'a, T: Float + 'static, A> {
     pub item: A,
     pub row_vec: &'a [T],
     pub norm: T,
 }
 
-impl<'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for LeafWithNorm<'a, T, A> {
-    fn from(value: (&A, ArrayView1<'a, T>)) -> Self {
+impl<'a, T: Float, A> From<(A, ArrayView1<'a, T>)> for LeafWithNorm<'a, T, A> {
+    fn from(value: (A, ArrayView1<'a, T>)) -> Self {
         let arr = value.1;
         LeafWithNorm {
-            item: value.0.clone(),
+            item: value.0,
             row_vec: arr.to_slice().unwrap(),
             norm: arr.dot(&arr),
         }
     }
 }
 
-pub struct Leaf<'a, T: Float, A: Copy> {
+#[derive(Clone, Copy)]
+pub struct Leaf<'a, T: Float, A> {
     pub item: A,
     pub row_vec: &'a [T],
 }
 
-impl<'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for Leaf<'a, T, A> {
-    fn from(value: (&A, ArrayView1<'a, T>)) -> Self {
+impl<'a, T: Float, A> From<(A, ArrayView1<'a, T>)> for Leaf<'a, T, A> {
+    fn from(value: (A, ArrayView1<'a, T>)) -> Self {
         Leaf {
-            item: value.0.clone(),
+            item: value.0,
             row_vec: value.1.to_slice().unwrap(),
         }
     }
@@ -35,26 +37,20 @@ impl<'a, T: Float, A: Copy> From<(&A, ArrayView1<'a, T>)> for Leaf<'a, T, A> {
 pub trait KdLeaf<'a, T: Float> {
     fn dim(&self) -> usize;
 
-    fn is_finite(&self) -> bool;
-
-    fn is_not_finite(&self) -> bool;
+    fn value_at(&self, idx: usize) -> T;
 
     fn vec(&self) -> &'a [T];
 
     fn norm(&self) -> T;
 }
 
-impl<'a, T: Float, A: Copy> KdLeaf<'a, T> for LeafWithNorm<'a, T, A> {
+impl<'a, T: Float, A> KdLeaf<'a, T> for LeafWithNorm<'a, T, A> {
     fn dim(&self) -> usize {
         self.row_vec.len()
     }
 
-    fn is_finite(&self) -> bool {
-        self.row_vec.iter().all(|x| x.is_finite())
-    }
-
-    fn is_not_finite(&self) -> bool {
-        self.row_vec.iter().any(|x| !x.is_finite())
+    fn value_at(&self, idx: usize) -> T {
+        self.row_vec[idx]
     }
 
     fn vec(&self) -> &'a [T] {
@@ -66,17 +62,13 @@ impl<'a, T: Float, A: Copy> KdLeaf<'a, T> for LeafWithNorm<'a, T, A> {
     }
 }
 
-impl<'a, T: Float, A: Copy> KdLeaf<'a, T> for Leaf<'a, T, A> {
+impl<'a, T: Float, A> KdLeaf<'a, T> for Leaf<'a, T, A> {
     fn dim(&self) -> usize {
         self.row_vec.len()
     }
 
-    fn is_finite(&self) -> bool {
-        self.row_vec.iter().all(|x| x.is_finite())
-    }
-
-    fn is_not_finite(&self) -> bool {
-        self.row_vec.iter().any(|x| !x.is_finite())
+    fn value_at(&self, idx: usize) -> T {
+        self.row_vec[idx]
     }
 
     fn vec(&self) -> &'a [T] {

@@ -13,16 +13,19 @@
 /// E.g.
 /// within_count returns a u32 as opposed to usize because that can help me skip a type conversion when used with Polars.
 pub mod arkadia;
-pub mod arkadia_lp;
+pub mod arkadia_any;
 pub mod leaf;
 pub mod neighbor;
 pub mod utils;
 
-pub use arkadia::Kdtree;
-pub use arkadia_lp::{LpKdtree, LP};
+pub use arkadia::KDT;
+pub use arkadia_any::{AnyKDT, DIST};
 pub use leaf::{KdLeaf, Leaf, LeafWithNorm};
 pub use neighbor::NB;
-pub use utils::{matrix_to_leaves, matrix_to_leaves_w_norm, suggest_capacity, SplitMethod};
+pub use utils::{
+    matrix_to_empty_leaves, matrix_to_empty_leaves_w_norm, matrix_to_leaves,
+    matrix_to_leaves_w_norm, matrix_to_leaves_w_row_num, suggest_capacity, SplitMethod,
+};
 
 // ---------------------------------------------------------------------------------------------------------
 use num::Float;
@@ -46,49 +49,140 @@ impl From<bool> for KNNMethod {
 
 /// KD Tree Queries
 pub trait KDTQ<'a, T: Float + 'static, A> {
-    fn knn_leaf(&self, k: usize, leaf: impl KdLeaf<'a, T>, epsilon: T) -> Option<Vec<NB<T, A>>>;
+    fn dim(&self) -> usize;
 
-    fn knn_bounded_leaf(
+    fn knn_one_step(
         &self,
+        pending: &mut Vec<(T, &Self)>,
+        top_k: &mut Vec<NB<T, A>>,
         k: usize,
-        leaf: impl KdLeaf<'a, T>,
+        point: &[T],
+        point_norm_cache: T,
         max_dist_bound: T,
-    ) -> Option<Vec<NB<T, A>>>;
+        epsilon: T,
+    );
 
-    fn within_leaf(&self, leaf: impl KdLeaf<'a, T>, radius: T, sort: bool)
-        -> Option<Vec<NB<T, A>>>;
+    fn within_one_step(
+        &self,
+        pending: &mut Vec<(T, &Self)>,
+        neighbors: &mut Vec<NB<T, A>>,
+        point: &[T],
+        point_norm_cache: T,
+        radius: T,
+    );
 
-    fn within_leaf_count(&self, leaf: impl KdLeaf<'a, T>, radius: T) -> Option<u32>;
+    fn within_count_one_step(
+        &self,
+        pending: &mut Vec<(T, &Self)>,
+        point: &[T],
+        point_norm_cache: T,
+        radius: T,
+    ) -> u32;
+
+    fn knn(&self, k: usize, point: &[T], epsilon: T) -> Option<Vec<NB<T, A>>> {
+        if k == 0 || (point.len() != self.dim()) || (point.iter().any(|x| !x.is_finite())) {
+            None
+        } else {
+            // Always allocate 1 more.
+            let mut top_k = Vec::with_capacity(k + 1);
+            let mut pending = Vec::with_capacity(k + 1);
+            pending.push((T::min_value(), self));
+            while !pending.is_empty() {
+                self.knn_one_step(
+                    &mut pending,
+                    &mut top_k,
+                    k,
+                    point,
+                    T::zero(),
+                    T::max_value(),
+                    epsilon,
+                );
+            }
+            Some(top_k)
+        }
+    }
+
+    fn knn_bounded(&self, k: usize, point: &[T], max_dist_bound: T) -> Option<Vec<NB<T, A>>> {
+        if k == 0
+            || (point.len() != self.dim())
+            || (point.iter().any(|x| !x.is_finite()))
+            || max_dist_bound <= T::zero() + T::epsilon()
+        {
+            None
+        } else {
+            // Always allocate 1 more.
+            let mut top_k = Vec::with_capacity(k + 1);
+            let mut pending = Vec::with_capacity(k + 1);
+            pending.push((T::min_value(), self));
+            while !pending.is_empty() {
+                self.knn_one_step(
+                    &mut pending,
+                    &mut top_k,
+                    k,
+                    point,
+                    T::zero(),
+                    max_dist_bound,
+                    T::zero(),
+                );
+            }
+            Some(top_k)
+        }
+    }
+
+    fn within(&self, point: &[T], radius: T, sort: bool) -> Option<Vec<NB<T, A>>> {
+        // radius is actually squared radius
+        if radius <= T::zero() + T::epsilon() || (point.iter().any(|x| !x.is_finite())) {
+            None
+        } else {
+            // Always allocate some.
+            let mut neighbors = Vec::with_capacity(32);
+            let mut pending = vec![(T::min_value(), self)];
+            while !pending.is_empty() {
+                self.within_one_step(&mut pending, &mut neighbors, point, T::zero(), radius);
+            }
+            if sort {
+                neighbors.sort_unstable();
+            }
+            neighbors.shrink_to_fit();
+            Some(neighbors)
+        }
+    }
+
+    fn within_count(&self, point: &[T], radius: T) -> Option<u32> {
+        // radius is actually squared radius
+        if radius <= T::zero() + T::epsilon() || (point.iter().any(|x| !x.is_finite())) {
+            None
+        } else {
+            // Always allocate some.
+            let mut cnt = 0u32;
+            let mut pending = vec![(T::min_value(), self)];
+            while !pending.is_empty() {
+                cnt += self.within_count_one_step(&mut pending, point, T::zero(), radius);
+            }
+            Some(cnt)
+        }
+    }
 
     // Helper function that finds the bounding box for each (sub)kdtree
-    fn find_bounds(data: &[impl KdLeaf<'a, T>], depth: usize, dim: usize) -> (Vec<T>, Vec<T>) {
+    fn find_bounds(data: &[impl KdLeaf<'a, T>], dim: usize) -> (Vec<T>, Vec<T>) {
         let mut min_bounds = vec![T::max_value(); dim];
         let mut max_bounds = vec![T::min_value(); dim];
-        if depth == 0 {
-            (min_bounds, max_bounds)
-        } else {
-            for elem in data.iter() {
-                for i in 0..dim {
-                    min_bounds[i] = min_bounds[i].min(elem.vec()[i]);
-                    max_bounds[i] = max_bounds[i].max(elem.vec()[i]);
-                }
+
+        for elem in data.iter() {
+            for i in 0..dim {
+                min_bounds[i] = min_bounds[i].min(elem.value_at(i));
+                max_bounds[i] = max_bounds[i].max(elem.value_at(i));
             }
-            (min_bounds, max_bounds)
         }
+        (min_bounds, max_bounds)
     }
 }
 
 pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:
     KDTQ<'a, T, A>
 {
-    fn knn_regress(
-        &self,
-        k: usize,
-        leaf: impl KdLeaf<'a, T>,
-        max_dist_bound: T,
-        how: KNNMethod,
-    ) -> Option<f64> {
-        let knn = self.knn_bounded_leaf(k, leaf, max_dist_bound);
+    fn knn_regress(&self, k: usize, point: &[T], max_dist_bound: T, how: KNNMethod) -> Option<f64> {
+        let knn = self.knn_bounded(k, point, max_dist_bound);
         match knn {
             Some(nn) => match how {
                 KNNMethod::DInvW => {
@@ -120,14 +214,8 @@ pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>
 }
 
 pub trait KNNClassifier<'a, T: Float + 'static>: KDTQ<'a, T, u32> {
-    fn knn_classif(
-        &self,
-        k: usize,
-        leaf: impl KdLeaf<'a, T>,
-        max_dist_bound: T,
-        how: KNNMethod,
-    ) -> Option<u32> {
-        let knn = self.knn_bounded_leaf(k, leaf, max_dist_bound);
+    fn knn_classif(&self, k: usize, point: &[T], max_dist_bound: T, how: KNNMethod) -> Option<u32> {
+        let knn = self.knn_bounded(k, point, max_dist_bound);
         match knn {
             Some(nn) => match how {
                 KNNMethod::DInvW => {

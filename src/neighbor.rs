@@ -12,6 +12,10 @@ impl<T: Float, A> NB<T, A> {
         self.item
     }
 
+    pub fn to_dist(self) -> T {
+        self.dist
+    }
+
     pub fn to_pair(self) -> (T, A) {
         (self.dist, self.item)
     }

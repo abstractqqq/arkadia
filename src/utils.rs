@@ -36,8 +36,19 @@ pub fn matrix_to_leaves_w_norm<'a, T: Float + 'static, A: Copy>(
 ) -> Vec<LeafWithNorm<'a, T, A>> {
     values
         .iter()
-        .zip(matrix.rows().into_iter())
+        .copied()
+        .zip(matrix.rows())
         .map(|pair| pair.into())
+        .collect::<Vec<_>>()
+}
+
+pub fn matrix_to_empty_leaves_w_norm<'a, T: Float + 'static>(
+    matrix: &'a ArrayView2<'a, T>,
+) -> Vec<LeafWithNorm<'a, T, ()>> {
+    matrix
+        .rows()
+        .into_iter()
+        .map(|row| ((), row).into())
         .collect::<Vec<_>>()
 }
 
@@ -47,7 +58,29 @@ pub fn matrix_to_leaves<'a, T: Float + 'static, A: Copy>(
 ) -> Vec<Leaf<'a, T, A>> {
     values
         .iter()
-        .zip(matrix.rows().into_iter())
+        .copied()
+        .zip(matrix.rows())
         .map(|pair| pair.into())
+        .collect::<Vec<_>>()
+}
+
+pub fn matrix_to_leaves_w_row_num<'a, T: Float + 'static>(
+    matrix: &'a ArrayView2<'a, T>,
+) -> Vec<Leaf<'a, T, usize>> {
+    matrix
+        .rows()
+        .into_iter()
+        .enumerate()
+        .map(|pair| pair.into())
+        .collect::<Vec<_>>()
+}
+
+pub fn matrix_to_empty_leaves<'a, T: Float + 'static>(
+    matrix: &'a ArrayView2<'a, T>,
+) -> Vec<Leaf<'a, T, ()>> {
+    matrix
+        .rows()
+        .into_iter()
+        .map(|row| ((), row).into())
         .collect::<Vec<_>>()
 }

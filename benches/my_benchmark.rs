@@ -1,7 +1,7 @@
 use arkadia::{
-    matrix_to_leaves, matrix_to_leaves_w_norm, suggest_capacity, Kdtree, LpKdtree, SplitMethod, LP,
+    arkadia::KDT, arkadia_any::{AnyKDT, DIST}, matrix_to_leaves, matrix_to_leaves_w_norm, suggest_capacity, SplitMethod, KDTQ
 };
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use kdtree as kd;
 use ndarray::{arr1, Array1, Array2};
 
@@ -39,10 +39,18 @@ fn knn_queries_3d(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
+    let mut leaf_elements2 = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose. The kdtree package also uses midpoint
-    let tree = Kdtree::from_leaves(
+    let tree = KDT::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
+    )
+    .unwrap();
+
+    let tree2 = AnyKDT::from_leaves(
+        &mut leaf_elements2,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::SQL2,
     )
     .unwrap();
 
@@ -69,6 +77,14 @@ fn knn_queries_3d(c: &mut Criterion) {
             }
         })
     });
+
+    c.bench_function("ARKaDia 200 10NN queries (3D) AnyKDT", |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree2.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
 }
 
 fn knn_queries_5d(c: &mut Criterion) {
@@ -79,10 +95,18 @@ fn knn_queries_5d(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
+    let mut leaf_elements2 = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = Kdtree::from_leaves(
+    let tree = KDT::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
+    )
+    .unwrap();
+
+    let tree2 = AnyKDT::from_leaves(
+        &mut leaf_elements2,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::SQL2,
     )
     .unwrap();
 
@@ -108,6 +132,14 @@ fn knn_queries_5d(c: &mut Criterion) {
             }
         })
     });
+
+    c.bench_function("ARKaDia 200 10NN queries (5D) AnyKDT", |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree2.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
 }
 
 fn knn_queries_5d_linf(c: &mut Criterion) {
@@ -119,10 +151,10 @@ fn knn_queries_5d_linf(c: &mut Criterion) {
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = LpKdtree::from_leaves(
+    let tree = AnyKDT::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-        LP::LINF,
+        DIST::LINF,
     )
     .unwrap();
 
@@ -161,10 +193,18 @@ fn knn_queries_10d(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
+    let mut leaf_elements2 = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = Kdtree::from_leaves(
+    let tree = KDT::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
+    )
+    .unwrap();
+
+    let tree2 = AnyKDT::from_leaves(
+        &mut leaf_elements2,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::SQL2,
     )
     .unwrap();
 
@@ -190,6 +230,14 @@ fn knn_queries_10d(c: &mut Criterion) {
             }
         })
     });
+
+    c.bench_function("ARKaDia 200 10NN queries (10D) AnyKDT", |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree2.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
 }
 
 fn knn_queries_10d_linf(c: &mut Criterion) {
@@ -201,10 +249,10 @@ fn knn_queries_10d_linf(c: &mut Criterion) {
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = LpKdtree::from_leaves(
+    let tree = AnyKDT::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
-        LP::LINF,
+        DIST::LINF,
     )
     .unwrap();
 
@@ -242,7 +290,7 @@ fn within_queries(c: &mut Criterion) {
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = Kdtree::from_leaves(
+    let tree = KDT::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
     )
@@ -287,7 +335,7 @@ fn within_count_queries(c: &mut Criterion) {
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves_w_norm(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = Kdtree::from_leaves(
+    let tree = KDT::from_leaves(
         &mut leaf_elements,
         SplitMethod::default(), // defaults to midpoint
     )
@@ -310,12 +358,12 @@ fn within_count_queries(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    // knn_queries_3d,
-    // knn_queries_5d,
+    knn_queries_3d,
+    knn_queries_5d,
     knn_queries_5d_linf,
     knn_queries_10d_linf,
-    // knn_queries_10d,
-    // within_queries,
-    // within_count_queries
+    knn_queries_10d,
+    within_queries,
+    within_count_queries
 );
 criterion_main!(benches);
