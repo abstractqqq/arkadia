@@ -448,14 +448,14 @@ fn within_count_queries(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    // knn_queries_3d,
-    // knn_queries_5d,
-    // knn_queries_5d_linf,
-    // knn_queries_10d_linf,
-    knn_queries_3d_2,
-    knn_queries_10d,
     knn_10d_tree_construction,
-    // within_queries,
-    // within_count_queries
+    knn_queries_3d,
+    knn_queries_5d,
+    knn_queries_5d_linf,
+    knn_queries_10d_linf,
+    // knn_queries_3d_2,
+    knn_queries_10d,
+    within_queries,
+    within_count_queries
 );
 criterion_main!(benches);

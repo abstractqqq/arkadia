@@ -19,7 +19,6 @@ impl <'a, A> KdNode<'a, A> {
         self.leaves.is_empty()
     }
 
-
     fn from_data_is_leaf(data: &'a [Leaf<'a, f64, A>], min:Vec<f64>, max:Vec<f64>) -> Self {
         // because this is leaf, we can put whatever split axis and value
         Self {

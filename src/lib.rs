@@ -150,19 +150,6 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
         }
     }
 
-    // Helper function that finds the bounding box for each (sub)kdtree
-    fn find_bounds(data: &[impl KdLeaf<'a, T>], dim: usize) -> (Vec<T>, Vec<T>) {
-        let mut min_bounds = vec![T::max_value(); dim];
-        let mut max_bounds = vec![T::min_value(); dim];
-
-        for elem in data.iter() {
-            for i in 0..dim {
-                min_bounds[i] = min_bounds[i].min(elem.value_at(i));
-                max_bounds[i] = max_bounds[i].max(elem.value_at(i));
-            }
-        }
-        (min_bounds, max_bounds)
-    }
 }
 
 pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:
