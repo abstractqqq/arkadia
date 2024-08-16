@@ -13,6 +13,7 @@
 /// E.g.
 /// within_count returns a u32 as opposed to usize because that can help me skip a type conversion when used with Polars.
 pub mod arkadia_any;
+pub mod arena_kdt;
 pub mod leaf;
 pub mod neighbor;
 pub mod utils;
@@ -20,6 +21,7 @@ pub mod utils;
 pub use arkadia_any::{AnyKDT, DIST};
 pub use leaf::{KdLeaf, Leaf};
 pub use neighbor::NB;
+use serde::Deserialize;
 pub use utils::{
     matrix_to_empty_leaves, matrix_to_leaves, matrix_to_leaves_w_row_num, suggest_capacity,
     SplitMethod,
@@ -28,19 +30,24 @@ pub use utils::{
 // ---------------------------------------------------------------------------------------------------------
 use num::Float;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default, Deserialize)]
 pub enum KNNMethod {
-    DInvW, // Distance Inversion Weighted. E.g. Use (1/(1+d)) to weight the regression / classification
+    P1Weighted, // Distance Inversion Weighted. E.g. Use (1/(1+d)) to weight the regression / classification
+    Weighted, // Distance Inversion Weighted. E.g. Use (1/d) to weight the regression / classification
     #[default]
-    NoW, // No Weight
+    NotWeighted, // No Weight
 }
 
-impl From<bool> for KNNMethod {
-    fn from(weighted: bool) -> Self {
+impl KNNMethod {
+    pub fn new(weighted: bool, min_dist: f64) -> Self {
         if weighted {
-            KNNMethod::DInvW
+            if min_dist <= f64::epsilon() {
+                Self::P1Weighted
+            } else {
+                Self::Weighted
+            }
         } else {
-            KNNMethod::NoW
+            Self::NotWeighted
         }
     }
 }
@@ -55,7 +62,6 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
         top_k: &mut Vec<NB<T, A>>,
         k: usize,
         point: &[T],
-        point_norm_cache: T,
         max_dist_bound: T,
         epsilon: T,
     );
@@ -65,17 +71,10 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
         pending: &mut Vec<(T, &Self)>,
         neighbors: &mut Vec<NB<T, A>>,
         point: &[T],
-        point_norm_cache: T,
         radius: T,
     );
 
-    fn within_count_one_step(
-        &self,
-        pending: &mut Vec<(T, &Self)>,
-        point: &[T],
-        point_norm_cache: T,
-        radius: T,
-    ) -> u32;
+    fn within_count_one_step(&self, pending: &mut Vec<(T, &Self)>, point: &[T], radius: T) -> u32;
 
     fn knn(&self, k: usize, point: &[T], epsilon: T) -> Option<Vec<NB<T, A>>> {
         if k == 0 || (point.len() != self.dim()) || (point.iter().any(|x| !x.is_finite())) {
@@ -86,25 +85,23 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
             let mut pending = Vec::with_capacity(k + 1);
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                self.knn_one_step(
-                    &mut pending,
-                    &mut top_k,
-                    k,
-                    point,
-                    T::zero(),
-                    T::max_value(),
-                    epsilon,
-                );
+                self.knn_one_step(&mut pending, &mut top_k, k, point, T::max_value(), epsilon);
             }
             Some(top_k)
         }
     }
 
-    fn knn_bounded(&self, k: usize, point: &[T], max_dist_bound: T) -> Option<Vec<NB<T, A>>> {
+    fn knn_bounded(
+        &self,
+        k: usize,
+        point: &[T],
+        max_dist_bound: T,
+        epsilon: T,
+    ) -> Option<Vec<NB<T, A>>> {
         if k == 0
             || (point.len() != self.dim())
             || (point.iter().any(|x| !x.is_finite()))
-            || max_dist_bound <= T::zero() + T::epsilon()
+            || max_dist_bound <= T::epsilon()
         {
             None
         } else {
@@ -113,15 +110,7 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
             let mut pending = Vec::with_capacity(k + 1);
             pending.push((T::min_value(), self));
             while !pending.is_empty() {
-                self.knn_one_step(
-                    &mut pending,
-                    &mut top_k,
-                    k,
-                    point,
-                    T::zero(),
-                    max_dist_bound,
-                    T::zero(),
-                );
+                self.knn_one_step(&mut pending, &mut top_k, k, point, max_dist_bound, epsilon);
             }
             Some(top_k)
         }
@@ -136,7 +125,7 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
             let mut neighbors = Vec::with_capacity(32);
             let mut pending = vec![(T::min_value(), self)];
             while !pending.is_empty() {
-                self.within_one_step(&mut pending, &mut neighbors, point, T::zero(), radius);
+                self.within_one_step(&mut pending, &mut neighbors, point, radius);
             }
             if sort {
                 neighbors.sort_unstable();
@@ -155,7 +144,7 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
             let mut cnt = 0u32;
             let mut pending = vec![(T::min_value(), self)];
             while !pending.is_empty() {
-                cnt += self.within_count_one_step(&mut pending, point, T::zero(), radius);
+                cnt += self.within_count_one_step(&mut pending, point, radius);
             }
             Some(cnt)
         }
@@ -179,31 +168,69 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
 pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:
     KDTQ<'a, T, A>
 {
-    fn knn_regress(&self, k: usize, point: &[T], max_dist_bound: T, how: KNNMethod) -> Option<f64> {
-        let knn = self.knn_bounded(k, point, max_dist_bound);
+    fn knn_regress(
+        &self,
+        k: usize,
+        point: &[T],
+        min_dist_bound: T,
+        max_dist_bound: T,
+        how: KNNMethod,
+    ) -> Option<f64> {
+        let knn = self
+            .knn_bounded(k, point, max_dist_bound, T::zero())
+            .map(|nn| {
+                nn.into_iter()
+                    .filter(|nb| nb.dist >= min_dist_bound)
+                    .collect::<Vec<_>>()
+            });
         match knn {
             Some(nn) => match how {
-                KNNMethod::DInvW => {
-                    let weights = nn
-                        .iter()
-                        .map(|nb| (nb.dist + T::one()).recip().into())
-                        .collect::<Vec<f64>>();
-                    let sum = weights.iter().copied().sum::<f64>();
-                    Some(
-                        nn.into_iter()
-                            .zip(weights.into_iter())
-                            .fold(0f64, |acc, (nb, w)| acc + w * nb.to_item().into())
-                            / sum,
-                    )
+                KNNMethod::P1Weighted => {
+                    if nn.is_empty() {
+                        None
+                    } else {
+                        let weights = nn
+                            .iter()
+                            .map(|nb| (T::one() + nb.dist).recip().into())
+                            .collect::<Vec<f64>>();
+                        let sum = weights.iter().copied().sum::<f64>();
+                        Some(
+                            nn.into_iter()
+                                .zip(weights.into_iter())
+                                .fold(0f64, |acc, (nb, w)| acc + w * nb.to_item().into())
+                                / sum,
+                        )
+                    }
                 }
-                KNNMethod::NoW => {
-                    let n = nn.len() as f64;
-                    Some(
-                        nn.into_iter()
-                            .fold(A::zero(), |acc, nb| acc + nb.to_item())
-                            .into()
-                            / n,
-                    )
+                KNNMethod::Weighted => {
+                    if nn.is_empty() {
+                        None
+                    } else {
+                        let weights = nn
+                            .iter()
+                            .map(|nb| nb.dist.recip().into())
+                            .collect::<Vec<f64>>();
+                        let sum = weights.iter().copied().sum::<f64>();
+                        Some(
+                            nn.into_iter()
+                                .zip(weights.into_iter())
+                                .fold(0f64, |acc, (nb, w)| acc + w * nb.to_item().into())
+                                / sum,
+                        )
+                    }
+                }
+                KNNMethod::NotWeighted => {
+                    if nn.is_empty() {
+                        None
+                    } else {
+                        let n = nn.len() as f64;
+                        Some(
+                            nn.into_iter()
+                                .fold(A::zero(), |acc, nb| acc + nb.to_item())
+                                .into()
+                                / n,
+                        )
+                    }
                 }
             },
             None => None,
@@ -213,18 +240,8 @@ pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>
 
 pub trait KNNClassifier<'a, T: Float + 'static>: KDTQ<'a, T, u32> {
     fn knn_classif(&self, k: usize, point: &[T], max_dist_bound: T, how: KNNMethod) -> Option<u32> {
-        let knn = self.knn_bounded(k, point, max_dist_bound);
-        match knn {
-            Some(nn) => match how {
-                KNNMethod::DInvW => {
-                    todo!()
-                }
-                KNNMethod::NoW => {
-                    todo!()
-                }
-            },
-            None => None,
-        }
+        let knn = self.knn_bounded(k, point, max_dist_bound, T::zero());
+        todo!()
     }
 }
 

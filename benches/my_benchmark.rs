@@ -1,5 +1,8 @@
 use arkadia::{
-    arkadia_any::{AnyKDT, DIST}, matrix_to_leaves, suggest_capacity, SplitMethod, KDTQ
+    arkadia_any::{AnyKDT, DIST}, 
+    arena_kdt::ArenaKdtree,
+    matrix_to_leaves, suggest_capacity, 
+    SplitMethod, KDTQ
 };
 use criterion::{criterion_group, criterion_main, Criterion};
 use kdtree as kd;
@@ -12,7 +15,7 @@ fn linf_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
         .fold(0., |acc, (x, y)| acc.max((x - y).abs()))
 }
 
-fn set_up_data(dim: usize) -> (Array2<f64>, Vec<Array1<f64>>) {
+fn set_up_data(dim: usize, n:usize) -> (Array2<f64>, Vec<Array1<f64>>) {
     let mut v = Vec::new();
     let rows = 50_000usize;
     for _ in 0..rows {
@@ -24,7 +27,7 @@ fn set_up_data(dim: usize) -> (Array2<f64>, Vec<Array1<f64>>) {
     let mat = mat.as_standard_layout().to_owned();
 
     let mut points = Vec::new();
-    for _ in 0..200 {
+    for _ in 0..n {
         let random_vec = (0..dim).map(|_| rand::random::<f64>()).collect::<Vec<_>>();
         points.push(arr1(&random_vec));
     }
@@ -34,7 +37,7 @@ fn set_up_data(dim: usize) -> (Array2<f64>, Vec<Array1<f64>>) {
 fn knn_queries_3d(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 3usize;
-    let (matrix, points) = set_up_data(dim);
+    let (matrix, points) = set_up_data(dim, 200);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
@@ -78,7 +81,7 @@ fn knn_queries_3d(c: &mut Criterion) {
 fn knn_queries_5d(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 5usize;
-    let (matrix, points) = set_up_data(dim);
+    let (matrix, points) = set_up_data(dim, 200);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
@@ -120,7 +123,7 @@ fn knn_queries_5d(c: &mut Criterion) {
 fn knn_queries_5d_linf(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 5usize;
-    let (matrix, points) = set_up_data(dim);
+    let (matrix, points) = set_up_data(dim, 200);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
@@ -160,14 +163,66 @@ fn knn_queries_5d_linf(c: &mut Criterion) {
     });
 }
 
-fn knn_queries_10d(c: &mut Criterion) {
+fn knn_10d_tree_construction(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 10usize;
-    let (matrix, points) = set_up_data(dim);
+    let (matrix, points) = set_up_data(dim, 200);
+    let values = (0..matrix.nrows()).collect::<Vec<_>>();
+
+    let binding = matrix.view();
+    
+    // For random uniform data, doesn't matter which method to choose
+
+    c.bench_function("Kdtree package tree construction", |b| {
+        b.iter(|| {
+            let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
+            for (i, row) in matrix.rows().into_iter().enumerate() {
+                let sl = row.to_slice().unwrap();
+                let _ = kd_tree.add(sl, i);
+            }
+        })
+    });
+
+    c.bench_function("Arkadia package tree construction", |b| {
+        
+        b.iter(|| {
+            let mut leaf_elements = matrix_to_leaves(&binding, &values);
+            let tree = AnyKDT::from_leaves(
+                &mut leaf_elements,
+                SplitMethod::default(), // defaults to midpoint
+                DIST::SQL2,
+            )
+            .unwrap();
+        })
+    });
+
+    c.bench_function("Arkadia ArenaKDT package tree construction", |b| {
+        b.iter(|| {
+            let mut leaf_elements = matrix_to_leaves(&binding, &values);
+            let arena_kdt = ArenaKdtree::from_leaves(
+                &mut leaf_elements,
+                dim,
+                suggest_capacity(dim),
+                DIST::SQL2
+            );
+        })
+    });
+
+
+
+
+
+}
+
+fn knn_queries_3d_2(c: &mut Criterion) {
+    let k: usize = 10usize;
+    let dim: usize = 3usize;
+    let (matrix, points) = set_up_data(dim, 400);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
+    let mut leaf_elements2 = leaf_elements.clone();
     // For random uniform data, doesn't matter which method to choose
 
     let tree = AnyKDT::from_leaves(
@@ -177,13 +232,20 @@ fn knn_queries_10d(c: &mut Criterion) {
     )
     .unwrap();
 
+    let arena_kdt = ArenaKdtree::from_leaves(
+        &mut leaf_elements2,
+        dim,
+        suggest_capacity(dim),
+        DIST::SQL2
+    );
+
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
         let sl = row.to_slice().unwrap();
         let _ = kd_tree.add(sl, i);
     }
 
-    c.bench_function("KdTree Package 200 10NN queries (10D)", |b| {
+    c.bench_function(&format!("KdTree Package {} 10NN queries ({}D)", points.len(), dim), |b| {
         b.iter(|| {
             for rv in points.iter() {
                 let point_slice = rv.as_slice().unwrap();
@@ -192,10 +254,75 @@ fn knn_queries_10d(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("ARKaDia 200 10NN queries (10D)", |b| {
+    c.bench_function(&format!("Arkadia {} 10NN queries ({}D)", points.len(), dim), |b| {
         b.iter(|| {
             for rv in points.iter() {
                 let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
+
+    c.bench_function(&format!("Arkadia ArenaKdt {} 10NN queries ({}D)", points.len(), dim), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = arena_kdt.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
+}
+
+fn knn_queries_10d(c: &mut Criterion) {
+    let k: usize = 10usize;
+    let dim: usize = 10usize;
+    let (matrix, points) = set_up_data(dim, 400);
+    let values = (0..matrix.nrows()).collect::<Vec<_>>();
+
+    let binding = matrix.view();
+    let mut leaf_elements = matrix_to_leaves(&binding, &values);
+    let mut leaf_elements2 = leaf_elements.clone();
+    // For random uniform data, doesn't matter which method to choose
+
+    let tree = AnyKDT::from_leaves(
+        &mut leaf_elements,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::SQL2,
+    )
+    .unwrap();
+
+    let arena_kdt = ArenaKdtree::from_leaves(
+        &mut leaf_elements2,
+        dim,
+        suggest_capacity(dim),
+        DIST::SQL2
+    );
+
+    let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
+    for (i, row) in matrix.rows().into_iter().enumerate() {
+        let sl = row.to_slice().unwrap();
+        let _ = kd_tree.add(sl, i);
+    }
+
+    c.bench_function(&format!("KdTree Package {} 10NN queries (10D)", points.len()), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let point_slice = rv.as_slice().unwrap();
+                let _ = kd_tree.nearest(point_slice, k, &kd::distance::squared_euclidean);
+            }
+        })
+    });
+
+    c.bench_function(&format!("Arkadia {} 10NN queries (10D)", points.len()), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
+
+    c.bench_function(&format!("Arkadia ArenaKdt {} 10NN queries (10D)", points.len()), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = arena_kdt.knn(k, rv.as_slice().unwrap(), 0f64);
             }
         })
     });
@@ -204,7 +331,7 @@ fn knn_queries_10d(c: &mut Criterion) {
 fn knn_queries_10d_linf(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 10usize;
-    let (matrix, points) = set_up_data(dim);
+    let (matrix, points) = set_up_data(dim, 200);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
@@ -245,7 +372,7 @@ fn knn_queries_10d_linf(c: &mut Criterion) {
 }
 
 fn within_queries(c: &mut Criterion) {
-    let (matrix, points) = set_up_data(5);
+    let (matrix, points) = set_up_data(5, 200);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
@@ -291,7 +418,7 @@ fn within_queries(c: &mut Criterion) {
 }
 
 fn within_count_queries(c: &mut Criterion) {
-    let (matrix, points) = set_up_data(5);
+    let (matrix, points) = set_up_data(5, 200);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
@@ -321,12 +448,14 @@ fn within_count_queries(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    knn_queries_3d,
-    knn_queries_5d,
-    knn_queries_5d_linf,
-    knn_queries_10d_linf,
+    // knn_queries_3d,
+    // knn_queries_5d,
+    // knn_queries_5d_linf,
+    // knn_queries_10d_linf,
+    knn_queries_3d_2,
     knn_queries_10d,
-    within_queries,
-    within_count_queries
+    knn_10d_tree_construction,
+    // within_queries,
+    // within_count_queries
 );
 criterion_main!(benches);

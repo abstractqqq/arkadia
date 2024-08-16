@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+indextree = "4.7.2"
 ndarray = "0.15.6"
 num = "0.4.3"
 rand = "*"
+serde = "1.0.206"
 
 [dev-dependencies]
 rand = "*"
