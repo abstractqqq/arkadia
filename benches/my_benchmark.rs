@@ -8,6 +8,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use kdtree as kd;
 use ndarray::{arr1, Array1, Array2};
 
+// All tests with 50_000 rows of data
+
 fn linf_dist_slice(a1: &[f64], a2: &[f64]) -> f64 {
     a1.iter()
         .copied()
@@ -274,7 +276,7 @@ fn knn_queries_3d_2(c: &mut Criterion) {
 fn knn_queries_10d(c: &mut Criterion) {
     let k: usize = 10usize;
     let dim: usize = 10usize;
-    let (matrix, points) = set_up_data(dim, 400);
+    let (matrix, points) = set_up_data(dim, 200);
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
@@ -289,7 +291,7 @@ fn knn_queries_10d(c: &mut Criterion) {
     )
     .unwrap();
 
-    let arena_kdt = ArenaKdtree::from_leaves(
+    let high_dim_tree = ArenaKdtree::from_leaves(
         &mut leaf_elements2,
         dim,
         suggest_capacity(dim),
@@ -319,10 +321,125 @@ fn knn_queries_10d(c: &mut Criterion) {
         })
     });
 
-    c.bench_function(&format!("Arkadia ArenaKdt {} 10NN queries (10D)", points.len()), |b| {
+    c.bench_function(&format!("Arkadia High DIM {} 10NN queries (10D)", points.len()), |b| {
         b.iter(|| {
             for rv in points.iter() {
-                let _ = arena_kdt.knn(k, rv.as_slice().unwrap(), 0f64);
+                let _ = high_dim_tree.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
+}
+
+
+fn knn_queries_60d(c: &mut Criterion) {
+    let k: usize = 10usize;
+    let dim: usize = 60usize;
+    let (matrix, points) = set_up_data(dim, 10);
+    let values = (0..matrix.nrows()).collect::<Vec<_>>();
+
+    let binding = matrix.view();
+    let mut leaf_elements1 = matrix_to_leaves(&binding, &values);
+    let mut leaf_elements2 = leaf_elements1.clone();
+    // For random uniform data, doesn't matter which method to choose
+
+    let tree1 = AnyKDT::from_leaves(
+        &mut leaf_elements1,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::SQL2,
+    )
+    .unwrap();
+
+    let tree2 = AnyKDT::from_leaves(
+        &mut leaf_elements2,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::HIGH_DIM_SQL2,
+    )
+    .unwrap();
+
+    let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
+    for (i, row) in matrix.rows().into_iter().enumerate() {
+        let sl = row.to_slice().unwrap();
+        let _ = kd_tree.add(sl, i);
+    }
+
+    c.bench_function(&format!("KdTree Package {} 10NN queries ({}D)", points.len(), dim), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let point_slice = rv.as_slice().unwrap();
+                let _ = kd_tree.nearest(point_slice, k, &kd::distance::squared_euclidean);
+            }
+        })
+    });
+
+    c.bench_function(&format!("Arkadia {} 10NN queries ({}D)", points.len(), dim), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree1.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
+
+    c.bench_function(&format!("Arkadia HIGH DIM {} 10NN queries ({}D)", points.len(), dim), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree2.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
+}
+
+fn knn_queries_20d(c: &mut Criterion) {
+    let k: usize = 10usize;
+    let dim: usize = 20usize;
+    let (matrix, points) = set_up_data(dim, 10);
+    let values = (0..matrix.nrows()).collect::<Vec<_>>();
+
+    let binding = matrix.view();
+    let mut leaf_elements1 = matrix_to_leaves(&binding, &values);
+    let mut leaf_elements2 = leaf_elements1.clone();
+    // For random uniform data, doesn't matter which method to choose
+
+    let tree1 = AnyKDT::from_leaves(
+        &mut leaf_elements1,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::SQL2,
+    )
+    .unwrap();
+
+    let tree2 = AnyKDT::from_leaves(
+        &mut leaf_elements2,
+        SplitMethod::default(), // defaults to midpoint
+        DIST::HIGH_DIM_SQL2,
+    )
+    .unwrap();
+
+    let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
+    for (i, row) in matrix.rows().into_iter().enumerate() {
+        let sl = row.to_slice().unwrap();
+        let _ = kd_tree.add(sl, i);
+    }
+
+    c.bench_function(&format!("KdTree Package {} 10NN queries ({}D)", points.len(), dim), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let point_slice = rv.as_slice().unwrap();
+                let _ = kd_tree.nearest(point_slice, k, &kd::distance::squared_euclidean);
+            }
+        })
+    });
+
+    c.bench_function(&format!("Arkadia {} 10NN queries ({}D)", points.len(), dim), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree1.knn(k, rv.as_slice().unwrap(), 0f64);
+            }
+        })
+    });
+
+    c.bench_function(&format!("Arkadia HIGH DIM {} 10NN queries ({}D)", points.len(), dim), |b| {
+        b.iter(|| {
+            for rv in points.iter() {
+                let _ = tree2.knn(k, rv.as_slice().unwrap(), 0f64);
             }
         })
     });
@@ -376,6 +493,7 @@ fn within_queries(c: &mut Criterion) {
     let values = (0..matrix.nrows()).collect::<Vec<_>>();
 
     let binding = matrix.view();
+    let mut leaf_elements = matrix_to_leaves(&binding, &values);
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
     let tree = AnyKDT::from_leaves(
@@ -448,14 +566,16 @@ fn within_count_queries(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    knn_10d_tree_construction,
-    knn_queries_3d,
-    knn_queries_5d,
-    knn_queries_5d_linf,
-    knn_queries_10d_linf,
-    // knn_queries_3d_2,
+    // knn_10d_tree_construction,
+    // knn_queries_3d,
+    // knn_queries_5d,
+    // knn_queries_5d_linf,
+    // knn_queries_10d_linf,
     knn_queries_10d,
-    within_queries,
-    within_count_queries
+    knn_queries_20d,
+    knn_queries_60d,
+    // knn_queries_3d_2,
+    // within_queries,
+    // within_count_queries
 );
 criterion_main!(benches);

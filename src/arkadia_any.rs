@@ -3,6 +3,7 @@ use std::usize;
 /// A Kdtree
 use crate::{leaf::KdLeaf, suggest_capacity, Leaf, SplitMethod, KDTQ, NB};
 use num::Float;
+use cfavml::safe_trait_distance_ops::DistanceOps;
 
 use super::KNNRegressor;
 
@@ -10,14 +11,16 @@ use super::KNNRegressor;
 pub enum DIST<T: Float + 'static> {
     L1,
     L2,
-    SQL2, // Squared LP, but without using cached norms. Good for one-time queries
+    SQL2, // Squared L2
+    HIGH_DIM_SQL2, // Higher Dim SQL2
     LINF,
     ANY(fn(&[T], &[T]) -> T),
 }
 
-impl<T: Float + 'static> DIST<T> {
+impl<T: Float + DistanceOps + 'static> DIST<T> {
     #[inline(always)]
     pub fn dist(&self, a1: &[T], a2: &[T]) -> T {
+
         match self {
             DIST::L1 => a1
                 .iter()
@@ -32,12 +35,15 @@ impl<T: Float + 'static> DIST<T> {
                 .fold(T::zero(), |acc, (x, y)| acc + ((x - y).powi(2)))
                 .sqrt(),
 
+
             DIST::SQL2 => a1
                 .iter()
                 .copied()
                 .zip(a2.iter().copied())
                 .fold(T::zero(), |acc, (x, y)| acc + ((x - y).powi(2))),
 
+            DIST::HIGH_DIM_SQL2 => cfavml::squared_euclidean(a1, a2),
+            
             DIST::LINF => a1
                 .iter()
                 .copied()
@@ -49,7 +55,7 @@ impl<T: Float + 'static> DIST<T> {
     }
 }
 
-pub struct AnyKDT<'a, T: Float + 'static + std::fmt::Debug, A> {
+pub struct AnyKDT<'a, T: Float + DistanceOps + 'static + std::fmt::Debug, A> {
     dim: usize,
     // Nodes
     left: Option<Box<AnyKDT<'a, T, A>>>,
@@ -66,7 +72,7 @@ pub struct AnyKDT<'a, T: Float + 'static + std::fmt::Debug, A> {
 }
 
 
-impl<'a, T: Float + 'static + std::fmt::Debug, A: Copy> AnyKDT<'a, T, A> {
+impl<'a, T: Float + DistanceOps + 'static + std::fmt::Debug, A: Copy> AnyKDT<'a, T, A> {
     // Add method to create the tree by adding leaf elements one by one
 
     // Helper function that finds the bounding box for each (sub)kdtree
@@ -260,7 +266,7 @@ impl<'a, T: Float + 'static + std::fmt::Debug, A: Copy> AnyKDT<'a, T, A> {
                 dist.sqrt()
             }
 
-            DIST::SQL2 => {
+            DIST::SQL2 | DIST::HIGH_DIM_SQL2 => {
                 for i in 0..point.len() {
                     if point[i] > max_bounds[i] {
                         dist = dist + (point[i] - max_bounds[i]).powi(2);
@@ -339,7 +345,7 @@ impl<'a, T: Float + 'static + std::fmt::Debug, A: Copy> AnyKDT<'a, T, A> {
     }
 }
 
-impl<'a, T: Float + 'static + std::fmt::Debug, A: Copy> KDTQ<'a, T, A> for AnyKDT<'a, T, A> {
+impl<'a, T: Float + DistanceOps + 'static + std::fmt::Debug, A: Copy> KDTQ<'a, T, A> for AnyKDT<'a, T, A> {
     fn dim(&self) -> usize {
         self.dim
     }
@@ -465,7 +471,7 @@ impl<'a, T: Float + 'static + std::fmt::Debug, A: Copy> KDTQ<'a, T, A> for AnyKD
     }
 }
 
-impl<'a, T: Float + 'static + std::fmt::Debug + Into<f64>, A: Float + Into<f64>>
+impl<'a, T: Float + DistanceOps + 'static + std::fmt::Debug + Into<f64>, A: Float + Into<f64>>
     KNNRegressor<'a, T, A> for AnyKDT<'a, T, A>
 {}
 
