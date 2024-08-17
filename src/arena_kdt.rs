@@ -4,7 +4,7 @@
 use std::num::{NonZero, NonZeroUsize};
 
 use indextree::{Arena, NodeId};
-use crate::{leaf::Leaf, KdLeaf, KDTQ, NB, DIST};
+use crate::{leaf::Leaf, KdLeaf, SpacialQueries, NB, DIST};
 
 pub struct KdNode<'a, A> {
     split_axis: usize,

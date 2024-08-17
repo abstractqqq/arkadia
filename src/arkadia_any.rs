@@ -1,9 +1,9 @@
 use std::usize;
 
 /// A Kdtree
-use crate::{leaf::KdLeaf, suggest_capacity, Leaf, SplitMethod, KDTQ, NB};
-use num::Float;
+use crate::{leaf::KdLeaf, suggest_capacity, Leaf, SplitMethod, SpacialQueries, NB};
 use cfavml::safe_trait_distance_ops::DistanceOps;
+use num::Float;
 
 use super::KNNRegressor;
 
@@ -332,7 +332,7 @@ impl<'a, T: Float + DistanceOps + 'static + std::fmt::Debug, A: Copy> AnyKDT<'a,
     }
 }
 
-impl<'a, T: Float + DistanceOps + 'static + std::fmt::Debug, A: Copy> KDTQ<'a, T, A> for AnyKDT<'a, T, A> {
+impl<'a, T: Float + DistanceOps + 'static + std::fmt::Debug, A: Copy> SpacialQueries<'a, T, A> for AnyKDT<'a, T, A> {
     fn dim(&self) -> usize {
         self.dim
     }

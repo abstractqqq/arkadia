@@ -2,7 +2,7 @@ use arkadia::{
     arkadia_any::{AnyKDT, DIST}, 
     arena_kdt::ArenaKdtree,
     matrix_to_leaves, suggest_capacity, 
-    SplitMethod, KDTQ
+    SplitMethod, SpacialQueries
 };
 use criterion::{criterion_group, criterion_main, Criterion};
 use kdtree as kd;

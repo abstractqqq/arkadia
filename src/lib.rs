@@ -53,7 +53,7 @@ impl KNNMethod {
 }
 
 /// KD Tree Queries
-pub trait KDTQ<'a, T: Float + 'static, A> {
+pub trait SpacialQueries<'a, T: Float + 'static, A> {
     fn dim(&self) -> usize;
 
     fn knn_one_step(
@@ -152,8 +152,7 @@ pub trait KDTQ<'a, T: Float + 'static, A> {
 
 }
 
-pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:
-    KDTQ<'a, T, A>
+pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:SpacialQueries<'a, T, A>
 {
     fn knn_regress(
         &self,
@@ -225,7 +224,7 @@ pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>
     }
 }
 
-pub trait KNNClassifier<'a, T: Float + 'static>: KDTQ<'a, T, u32> {
+pub trait KNNClassifier<'a, T: Float + 'static>: SpacialQueries<'a, T, u32> {
     fn knn_classif(&self, k: usize, point: &[T], max_dist_bound: T, how: KNNMethod) -> Option<u32> {
         let knn = self.knn_bounded(k, point, max_dist_bound, T::zero());
         todo!()
