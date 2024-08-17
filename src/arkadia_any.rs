@@ -12,7 +12,6 @@ pub enum DIST<T: Float + 'static> {
     L1,
     L2,
     SQL2, // Squared L2
-    HIGH_DIM_SQL2, // Higher Dim SQL2
     LINF,
     ANY(fn(&[T], &[T]) -> T),
 }
@@ -22,27 +21,15 @@ impl<T: Float + DistanceOps + 'static> DIST<T> {
     pub fn dist(&self, a1: &[T], a2: &[T]) -> T {
 
         match self {
+
             DIST::L1 => a1
                 .iter()
                 .copied()
                 .zip(a2.iter().copied())
                 .fold(T::zero(), |acc, (x, y)| acc + ((x - y).abs())),
 
-            DIST::L2 => a1
-                .iter()
-                .copied()
-                .zip(a2.iter().copied())
-                .fold(T::zero(), |acc, (x, y)| acc + ((x - y).powi(2)))
-                .sqrt(),
-
-
-            DIST::SQL2 => a1
-                .iter()
-                .copied()
-                .zip(a2.iter().copied())
-                .fold(T::zero(), |acc, (x, y)| acc + ((x - y).powi(2))),
-
-            DIST::HIGH_DIM_SQL2 => cfavml::squared_euclidean(a1, a2),
+            DIST::L2 => cfavml::squared_euclidean(a1, a2).sqrt(),
+            DIST::SQL2 => cfavml::squared_euclidean(a1, a2),
             
             DIST::LINF => a1
                 .iter()
@@ -266,7 +253,7 @@ impl<'a, T: Float + DistanceOps + 'static + std::fmt::Debug, A: Copy> AnyKDT<'a,
                 dist.sqrt()
             }
 
-            DIST::SQL2 | DIST::HIGH_DIM_SQL2 => {
+            DIST::SQL2 => {
                 for i in 0..point.len() {
                     if point[i] > max_bounds[i] {
                         dist = dist + (point[i] - max_bounds[i]).powi(2);
