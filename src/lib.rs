@@ -1,3 +1,4 @@
+pub mod arena_kdt;
 /// IMPORTANT!
 /// This crate is intentionally built to be imperfect.
 /// E.g.
@@ -13,7 +14,6 @@
 /// E.g.
 /// within_count returns a u32 as opposed to usize because that can help me skip a type conversion when used with Polars.
 pub mod arkadia_any;
-pub mod arena_kdt;
 pub mod leaf;
 pub mod neighbor;
 pub mod utils;
@@ -149,10 +149,10 @@ pub trait SpacialQueries<'a, T: Float + 'static, A> {
             Some(cnt)
         }
     }
-
 }
 
-pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:SpacialQueries<'a, T, A>
+pub trait KNNRegressor<'a, T: Float + Into<f64> + 'static, A: Float + Into<f64>>:
+    SpacialQueries<'a, T, A>
 {
     fn knn_regress(
         &self,

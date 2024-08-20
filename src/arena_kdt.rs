@@ -1,25 +1,24 @@
 /// Arena based Kdtree
 /// Actually not faster.. Not really..
-
 use std::num::{NonZero, NonZeroUsize};
 
+use crate::{leaf::Leaf, KdLeaf, SpacialQueries, DIST, NB};
 use indextree::{Arena, NodeId};
-use crate::{leaf::Leaf, KdLeaf, SpacialQueries, NB, DIST};
 
 pub struct KdNode<'a, A> {
     split_axis: usize,
     split_axis_value: f64,
-    leaves: &'a [Leaf<'a , f64, A>],
+    leaves: &'a [Leaf<'a, f64, A>],
     min_bounds: Vec<f64>,
     max_bounds: Vec<f64>,
 }
 
-impl <'a, A> KdNode<'a, A> {
+impl<'a, A> KdNode<'a, A> {
     fn is_not_leaf(&self) -> bool {
         self.leaves.is_empty()
     }
 
-    fn from_data_is_leaf(data: &'a [Leaf<'a, f64, A>], min:Vec<f64>, max:Vec<f64>) -> Self {
+    fn from_data_is_leaf(data: &'a [Leaf<'a, f64, A>], min: Vec<f64>, max: Vec<f64>) -> Self {
         // because this is leaf, we can put whatever split axis and value
         Self {
             split_axis: 0,
@@ -38,9 +37,8 @@ pub struct ArenaKdtree<'a, A> {
     d: DIST<f64>,
 }
 
-impl <'a, A: Copy> ArenaKdtree<'a, A> {
-
-    fn find_bounds(data: &[Leaf<'a , f64, A>], dim: usize) -> (Vec<f64>, Vec<f64>) {
+impl<'a, A: Copy> ArenaKdtree<'a, A> {
+    fn find_bounds(data: &[Leaf<'a, f64, A>], dim: usize) -> (Vec<f64>, Vec<f64>) {
         let mut min_bounds = vec![f64::MAX; dim];
         let mut max_bounds = vec![f64::MIN; dim];
 
@@ -54,9 +52,9 @@ impl <'a, A: Copy> ArenaKdtree<'a, A> {
     }
 
     pub fn from_leaves(
-        data: &'a mut [Leaf<'a, f64, A>], 
-        dim: usize, 
-        capacity:usize,
+        data: &'a mut [Leaf<'a, f64, A>],
+        dim: usize,
+        capacity: usize,
         d: DIST<f64>,
     ) -> Self {
         // Make sure data is not empty
@@ -67,57 +65,73 @@ impl <'a, A: Copy> ArenaKdtree<'a, A> {
             dim: dim,
             tree: arena,
             d: d,
-            root: root
+            root: root,
         }
     }
 
     fn from_leaves_unchecked(
-        arena:&mut Arena<KdNode<'a, A>>,
+        arena: &mut Arena<KdNode<'a, A>>,
         parent: Option<NodeId>,
         data: &'a mut [Leaf<'a, f64, A>],
-        dim:usize,
+        dim: usize,
         depth: usize,
-        capacity: usize
+        capacity: usize,
     ) {
-        let axis = depth % dim; 
+        let axis = depth % dim;
         let n = data.len();
         let (min_bounds, max_bounds) = Self::find_bounds(data, dim);
         if n <= capacity {
             if let Some(p) = parent {
-                p.append_value(KdNode::from_data_is_leaf(data, min_bounds, max_bounds), arena);
+                p.append_value(
+                    KdNode::from_data_is_leaf(data, min_bounds, max_bounds),
+                    arena,
+                );
             } else {
                 arena.new_node(KdNode::from_data_is_leaf(data, min_bounds, max_bounds));
             }
         } else {
-            let midpoint = min_bounds[axis]
-                + (max_bounds[axis] - min_bounds[axis]) / 2.0;
+            let midpoint = min_bounds[axis] + (max_bounds[axis] - min_bounds[axis]) / 2.0;
 
             data.sort_unstable_by_key(|leaf| leaf.value_at(axis) >= midpoint);
-            let split_idx = data
-                .partition_point(|elem| elem.value_at(axis) < midpoint);
+            let split_idx = data.partition_point(|elem| elem.value_at(axis) < midpoint);
 
             let (left, right) = data.split_at_mut(split_idx);
             if left.is_empty() {
                 if let Some(p) = parent {
-                    p.append_value(KdNode::from_data_is_leaf(right, min_bounds, max_bounds), arena);
+                    p.append_value(
+                        KdNode::from_data_is_leaf(right, min_bounds, max_bounds),
+                        arena,
+                    );
                 } else {
                     arena.new_node(KdNode::from_data_is_leaf(right, min_bounds, max_bounds));
                 }
             } else {
-                let new_parent = arena.new_node(
-                KdNode {
-                        leaves: &[], 
-                        split_axis:axis, 
-                        split_axis_value:midpoint, 
-                        min_bounds:min_bounds, 
-                        max_bounds:max_bounds
-                    }
-                );
+                let new_parent = arena.new_node(KdNode {
+                    leaves: &[],
+                    split_axis: axis,
+                    split_axis_value: midpoint,
+                    min_bounds: min_bounds,
+                    max_bounds: max_bounds,
+                });
                 if let Some(p) = parent {
                     p.append(new_parent, arena);
                 }
-                Self::from_leaves_unchecked(arena, Some(new_parent), left, dim, depth + 1, capacity);
-                Self::from_leaves_unchecked(arena, Some(new_parent), right, dim, depth + 1, capacity);
+                Self::from_leaves_unchecked(
+                    arena,
+                    Some(new_parent),
+                    left,
+                    dim,
+                    depth + 1,
+                    capacity,
+                );
+                Self::from_leaves_unchecked(
+                    arena,
+                    Some(new_parent),
+                    right,
+                    dim,
+                    depth + 1,
+                    capacity,
+                );
             }
         }
     }
@@ -137,14 +151,13 @@ impl <'a, A: Copy> ArenaKdtree<'a, A> {
 
     #[inline(always)]
     fn update_top_k(
-        &self, 
-        node:&KdNode<A>, 
-        top_k: &mut Vec<NB<f64, A>>, 
-        k: usize, 
-        point: &[f64], 
-        max_dist_bound: f64
+        &self,
+        node: &KdNode<A>,
+        top_k: &mut Vec<NB<f64, A>>,
+        k: usize,
+        point: &[f64],
+        max_dist_bound: f64,
     ) {
-
         let max_permissible_dist = max_dist_bound;
         // This is only called if is_leaf. Safe to unwrap.
         for element in node.leaves.iter() {
@@ -169,7 +182,6 @@ impl <'a, A: Copy> ArenaKdtree<'a, A> {
         }
         // You can find code comments in arkadia.rs
     }
-
 
     fn knn_one_step(
         &self,
@@ -231,12 +243,11 @@ impl <'a, A: Copy> ArenaKdtree<'a, A> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::arena_kdt::ArenaKdtree;
 
-    use super::super::{matrix_to_leaves, matrix_to_empty_leaves};
+    use super::super::{matrix_to_empty_leaves, matrix_to_leaves};
     use ndarray::{arr1, Array2, ArrayView1, ArrayView2};
 
     pub fn squared_l2(a: &[f64], b: &[f64]) -> f64 {
@@ -268,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn test_10d_knn_l2_dist_midpoint() {
+    fn test_10d_knn_l2_dist_arena_kdt() {
         // 10 nearest neighbors, matrix of size 1000 x 10
         let k = 10usize;
         let mut v = Vec::new();
@@ -301,6 +312,4 @@ mod tests {
             assert!((d1 - d2).abs() < 1e-10);
         }
     }
-
-
 }
