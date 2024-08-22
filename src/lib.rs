@@ -1,3 +1,5 @@
+#![feature(array_chunks)]
+
 pub mod arena_kdt;
 /// IMPORTANT!
 /// This crate is intentionally built to be imperfect.
