@@ -1,8 +1,8 @@
 /// Arena based Kdtree
 /// Actually not faster.. Not really..
-use std::num::{NonZero, NonZeroUsize};
-
-use crate::{leaf::Leaf, KdLeaf, SpacialQueries, DIST, NB};
+use std::num::NonZeroUsize;
+use crate::kdt::DIST;
+use crate::{leaf::Leaf, KdLeaf, NB};
 use indextree::{Arena, NodeId};
 
 pub struct KdNode<'a, A> {
@@ -246,8 +246,8 @@ impl<'a, A: Copy> ArenaKdtree<'a, A> {
 #[cfg(test)]
 mod tests {
     use crate::arena_kdt::ArenaKdtree;
-
-    use super::super::{matrix_to_empty_leaves, matrix_to_leaves};
+    use crate::kdt::DIST;
+    use super::super::matrix_to_leaves;
     use ndarray::{arr1, Array2, ArrayView1, ArrayView2};
 
     pub fn squared_l2(a: &[f64], b: &[f64]) -> f64 {
@@ -299,7 +299,7 @@ mod tests {
         let binding = mat.view();
         let mut leaves = matrix_to_leaves(&binding, &values);
 
-        let tree = ArenaKdtree::from_leaves(&mut leaves, 10, 40, crate::DIST::SQL2);
+        let tree = ArenaKdtree::from_leaves(&mut leaves, 10, 40, DIST::SQL2);
         let output = tree.knn(k, point.as_slice().unwrap(), 0f64);
 
         assert!(output.is_some());

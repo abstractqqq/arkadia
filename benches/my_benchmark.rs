@@ -1,5 +1,10 @@
 use arkadia::{
-    arena_kdt::ArenaKdtree, arkadia_any::{AnyKDT, DIST}, matrix_to_leaves, matrix_to_leaves_w_row_num, suggest_capacity, SpacialQueries, SplitMethod
+    arena_kdt::ArenaKdtree, 
+    kdt::{DIST, KDT}, 
+    matrix_to_leaves_w_row_num, 
+    matrix_to_leaves, 
+    suggest_capacity,
+    SpacialQueries
 };
 use criterion::{criterion_group, criterion_main, Criterion};
 use kdtree as kd;
@@ -56,7 +61,7 @@ fn knn_queries_3d(c: &mut Criterion) {
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose. The kdtree package also uses midpoint
 
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     // suggest_capacity(dim)
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
@@ -95,7 +100,7 @@ fn knn_queries_5d(c: &mut Criterion) {
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
 
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -130,7 +135,7 @@ fn knn_queries_5d_linf(c: &mut Criterion) {
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::LINF).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::LINF).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -179,21 +184,21 @@ fn knn_10d_tree_construction(c: &mut Criterion) {
     c.bench_function("Arkadia package tree construction", |b| {
         b.iter(|| {
             let mut leaf_elements = matrix_to_leaves_w_row_num(&binding);
-            let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+            let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
         })
     });
 
     c.bench_function("Arkadia package unchecked tree construction", |b| {
         b.iter(|| {
             let mut leaf_elements =  matrix_to_leaves_w_row_num(&binding);
-            let tree = AnyKDT::from_leaves_unchecked(&mut leaf_elements, DIST::SQL2);
+            let tree = KDT::from_leaves_unchecked(&mut leaf_elements, DIST::SQL2);
         })
     });
 
     c.bench_function("Arkadia package bulk load tree construction", |b| {
         b.iter(|| {
             let mut leaf_elements =  matrix_to_leaves_w_row_num(&binding);
-            let tree = AnyKDT::from_leaves_bulk_load(&mut leaf_elements, dim, suggest_capacity(dim), 0, DIST::SQL2);
+            let tree = KDT::from_leaves_bulk_load(&mut leaf_elements, dim, suggest_capacity(dim), 0, DIST::SQL2);
         })
     });
 
@@ -221,7 +226,7 @@ fn knn_queries_3d_2(c: &mut Criterion) {
     let mut leaf_elements2 = leaf_elements.clone();
     // For random uniform data, doesn't matter which method to choose
 
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     let arena_kdt =
         ArenaKdtree::from_leaves(&mut leaf_elements2, dim, suggest_capacity(dim), DIST::SQL2);
@@ -278,7 +283,7 @@ fn knn_queries_10d(c: &mut Criterion) {
     let mut leaf_elements2 = leaf_elements.clone();
     // For random uniform data, doesn't matter which method to choose
 
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -321,7 +326,7 @@ fn knn_queries_60d(c: &mut Criterion) {
     let mut leaf_elements2 = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
 
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     let tree2 =
         ArenaKdtree::from_leaves(&mut leaf_elements2, dim, suggest_capacity(dim), DIST::SQL2);
@@ -378,7 +383,7 @@ fn knn_queries_20d(c: &mut Criterion) {
     let mut leaf_elements2 = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
 
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     let tree2 =
         ArenaKdtree::from_leaves(&mut leaf_elements2, dim, suggest_capacity(dim), DIST::SQL2);
@@ -433,7 +438,7 @@ fn knn_queries_10d_linf(c: &mut Criterion) {
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::LINF).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::LINF).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -470,7 +475,7 @@ fn within_queries(c: &mut Criterion) {
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(5, suggest_capacity(5));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -511,7 +516,7 @@ fn within_count_queries(c: &mut Criterion) {
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
-    let tree = AnyKDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(5, suggest_capacity(5));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -537,9 +542,9 @@ criterion_group!(
     knn_queries_10d,
     knn_queries_20d,
     knn_queries_60d,
-    // knn_queries_5d_linf,
-    // knn_queries_10d_linf,
-    // within_queries,
-    // within_count_queries
+    knn_queries_5d_linf,
+    knn_queries_10d_linf,
+    within_queries,
+    within_count_queries
 );
 criterion_main!(benches);
