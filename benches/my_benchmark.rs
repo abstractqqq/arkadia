@@ -1,10 +1,5 @@
 use arkadia::{
-    arena_kdt::ArenaKdtree, 
-    kdt::{DIST, KDT}, 
-    matrix_to_leaves_w_row_num, 
-    matrix_to_leaves, 
-    suggest_capacity,
-    SpacialQueries
+    arena_kdt::ArenaKdtree, kdt::{OwnedKDT, DIST, KDT}, matrix_to_leaves, matrix_to_leaves_owned, matrix_to_leaves_w_row_num, suggest_capacity, utils::SplitMethod, SpacialQueries
 };
 use criterion::{criterion_group, criterion_main, Criterion};
 use kdtree as kd;
@@ -280,10 +275,11 @@ fn knn_queries_10d(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
-    let mut leaf_elements2 = leaf_elements.clone();
+    let leaf_elements2 = matrix_to_leaves_owned(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
 
     let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
+    let tree_owned = OwnedKDT::from_leaves(leaf_elements2, DIST::SQL2, SplitMethod::MEDIAN).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -309,6 +305,17 @@ fn knn_queries_10d(c: &mut Criterion) {
             b.iter(|| {
                 for rv in points.iter() {
                     let _ = tree.knn(k, rv.as_slice().unwrap(), 0f64);
+                }
+            })
+        },
+    );
+
+    c.bench_function(
+        &format!("Arkadia {} 10NN queries (10D), owned Tree", points.len()),
+        |b| {
+            b.iter(|| {
+                for rv in points.iter() {
+                    let _ = tree_owned.knn(k, rv.as_slice().unwrap(), 0f64);
                 }
             })
         },
@@ -535,16 +542,16 @@ fn within_count_queries(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    knn_10d_tree_construction,
-    knn_queries_3d,
-    knn_queries_3d_2,
-    knn_queries_5d,
     knn_queries_10d,
-    knn_queries_20d,
-    knn_queries_60d,
-    knn_queries_5d_linf,
-    knn_queries_10d_linf,
-    within_queries,
-    within_count_queries
+    // knn_10d_tree_construction,
+    // knn_queries_3d,
+    // knn_queries_3d_2,
+    // knn_queries_5d,
+    // knn_queries_20d,
+    // knn_queries_60d,
+    // knn_queries_5d_linf,
+    // knn_queries_10d_linf,
+    // within_queries,
+    // within_count_queries
 );
 criterion_main!(benches);

@@ -26,6 +26,7 @@ pub use utils::{
     matrix_to_empty_leaves,
     matrix_to_leaves_w_row_num,
     matrix_to_leaves,
+    matrix_to_leaves_owned,
     suggest_capacity, //SplitMethod,
 };
 

@@ -5,7 +5,7 @@ use crate::kdt::DIST;
 use crate::{leaf::Leaf, KdLeaf, NB};
 use indextree::{Arena, NodeId};
 
-pub struct KdNode<'a, A> {
+pub struct KdNode<'a, A:Copy> {
     split_axis: usize,
     split_axis_value: f64,
     leaves: &'a [Leaf<'a, f64, A>],
@@ -13,7 +13,7 @@ pub struct KdNode<'a, A> {
     max_bounds: Vec<f64>,
 }
 
-impl<'a, A> KdNode<'a, A> {
+impl<'a, A:Copy> KdNode<'a, A> {
     fn is_not_leaf(&self) -> bool {
         self.leaves.is_empty()
     }
@@ -30,7 +30,7 @@ impl<'a, A> KdNode<'a, A> {
     }
 }
 
-pub struct ArenaKdtree<'a, A> {
+pub struct ArenaKdtree<'a, A:Copy> {
     dim: usize,
     tree: Arena<KdNode<'a, A>>,
     root: NodeId,
