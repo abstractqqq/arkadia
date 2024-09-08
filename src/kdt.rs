@@ -3,7 +3,7 @@ use crate::utils::SplitMethod;
 use super::{leaf::{KdLeaf, OwnedLeaf}, suggest_capacity, KNNRegressor, Leaf, SpacialQueries, NB};
 use cfavml::safe_trait_distance_ops::DistanceOps;
 use num::Float;
-use std::{fmt::Debug, usize};
+use std::{fmt::Debug, ptr, usize};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DIST<T: Float + 'static> {
@@ -338,7 +338,7 @@ impl<'a, T: Float + DistanceOps + 'static + Debug, A: Copy> KDT<'a, T, A> {
 
     /// This checks the closest distance from point to the boundaries of the box (subtree),
     /// which can help us skip entire boxes.
-    // #[inline(always)]
+    #[inline]
     fn closest_dist_to_box(&self, bounds: &[T], point: &[T]) -> T {
         let mut dist = T::zero();
         match self.d {
@@ -401,27 +401,22 @@ impl<'a, T: Float + DistanceOps + 'static + Debug, A: Copy> KDT<'a, T, A> {
     }
 
     #[inline(always)]
-    fn update_top_k(&self, top_k: &mut Vec<NB<T, A>>, k: usize, point: &[T], max_dist_bound: T) {
+    fn update_top_k(&self, top_k: &mut Vec<NB<T, A>>, k: usize, point: &[T], current_max:T, max_dist_bound: T) {
         let max_permissible_dist = max_dist_bound;
         // This is only called if is_leaf. Safe to unwrap.
+        let mut cur_max = current_max; 
         for element in self.data.iter() {
-            let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(max_dist_bound);
-            let y = element.row_vec;
-            let dist = self.d.dist(y, point);
-            if dist <= max_permissible_dist && (dist < cur_max_dist || top_k.len() < k) {
-                let nb = NB {
+            let dist = self.d.dist(element.row_vec, point);
+            if dist <= max_permissible_dist && (dist < cur_max || top_k.len() < k) {
+                let idx = top_k.partition_point(|s| s.dist <= dist);
+                top_k.insert(idx,  NB {
                     dist: dist,
                     item: element.item,
-                };
-                let idx: usize = top_k.partition_point(|s| s <= &nb);
-                if idx < top_k.len() {
-                    if top_k.len() + 1 > k {
-                        top_k.pop();
-                    }
-                    top_k.insert(idx, nb);
-                } else if top_k.len() < k {
-                    top_k.push(nb);
+                });
+                if top_k.len() > k {
+                    top_k.pop();
                 }
+                cur_max = cur_max.max(dist);
             }
         }
     }
@@ -486,7 +481,7 @@ impl<'a, T: Float + DistanceOps + 'static + Debug, A: Copy> SpacialQueries<'a, T
                 pending.push((dist_to_box, next));
             }
         }
-        current.update_top_k(top_k, k, point, max_dist_bound);
+        current.update_top_k(top_k, k, point, current_max, max_dist_bound);
     }
 
     #[inline(always)]
@@ -882,7 +877,7 @@ impl<T: Float + DistanceOps + 'static + Debug, A: Copy> OwnedKDT<T, A> {
 
     /// This checks the closest distance from point to the boundaries of the box (subtree),
     /// which can help us skip entire boxes.
-    // #[inline(always)]
+    // #[inline]
     fn closest_dist_to_box(&self, bounds: &[T], point: &[T]) -> T {
         let mut dist = T::zero();
         match self.d {
@@ -945,27 +940,22 @@ impl<T: Float + DistanceOps + 'static + Debug, A: Copy> OwnedKDT<T, A> {
     }
 
     #[inline(always)]
-    fn update_top_k(&self, top_k: &mut Vec<NB<T, A>>, k: usize, point: &[T], max_dist_bound: T) {
+    fn update_top_k(&self, top_k: &mut Vec<NB<T, A>>, k: usize, point: &[T], current_max:T, max_dist_bound: T) {
         let max_permissible_dist = max_dist_bound;
         // This is only called if is_leaf. Safe to unwrap.
+        let mut cur_max = current_max; 
         for element in self.data.iter() {
-            let cur_max_dist = top_k.last().map(|nb| nb.dist).unwrap_or(max_dist_bound);
-            let y = element.vec();
-            let dist = self.d.dist(y, point);
-            if dist <= max_permissible_dist && (dist < cur_max_dist || top_k.len() < k) {
-                let nb = NB {
+            let dist = self.d.dist(&element.row_vec, point);
+            if dist <= max_permissible_dist && (dist < cur_max || top_k.len() < k) {
+                let idx = top_k.partition_point(|s| s.dist <= dist);
+                top_k.insert(idx,  NB {
                     dist: dist,
                     item: element.item,
-                };
-                let idx: usize = top_k.partition_point(|s| s <= &nb);
-                if idx < top_k.len() {
-                    if top_k.len() + 1 > k {
-                        top_k.pop();
-                    }
-                    top_k.insert(idx, nb);
-                } else if top_k.len() < k {
-                    top_k.push(nb);
+                });
+                if top_k.len() > k {
+                    top_k.pop();
                 }
+                cur_max = cur_max.max(dist);
             }
         }
     }
@@ -1029,7 +1019,7 @@ impl<'a, T: Float + DistanceOps + 'static + Debug, A: Copy> SpacialQueries<'a, T
                 pending.push((dist_to_box, next));
             }
         }
-        current.update_top_k(top_k, k, point, max_dist_bound);
+        current.update_top_k(top_k, k, point, current_max, max_dist_bound);
     }
 
     #[inline(always)]

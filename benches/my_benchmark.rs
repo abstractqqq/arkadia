@@ -279,7 +279,7 @@ fn knn_queries_10d(c: &mut Criterion) {
     // For random uniform data, doesn't matter which method to choose
 
     let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
-    let tree_owned = OwnedKDT::from_leaves(leaf_elements2, DIST::SQL2, SplitMethod::MEDIAN).unwrap();
+    let tree_owned = OwnedKDT::from_leaves(leaf_elements2, DIST::SQL2, SplitMethod::MIDPOINT).unwrap();
 
     let mut kd_tree = kd::KdTree::with_capacity(dim, suggest_capacity(dim));
     for (i, row) in matrix.rows().into_iter().enumerate() {
@@ -543,6 +543,8 @@ fn within_count_queries(c: &mut Criterion) {
 criterion_group!(
     benches,
     knn_queries_10d,
+    within_queries,
+    within_count_queries
     // knn_10d_tree_construction,
     // knn_queries_3d,
     // knn_queries_3d_2,
@@ -551,7 +553,5 @@ criterion_group!(
     // knn_queries_60d,
     // knn_queries_5d_linf,
     // knn_queries_10d_linf,
-    // within_queries,
-    // within_count_queries
 );
 criterion_main!(benches);

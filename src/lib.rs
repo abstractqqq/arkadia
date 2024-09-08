@@ -131,7 +131,8 @@ pub trait SpacialQueries<'a, T: Float + 'static, A> {
                 self.within_one_step(&mut pending, &mut neighbors, point, radius);
             }
             if sort {
-                neighbors.sort_unstable();
+                // neighbors.sort_unstable();
+                neighbors.sort_unstable_by(|a, b| a.dist.partial_cmp(&b.dist).unwrap());
             }
             neighbors.shrink_to_fit();
             Some(neighbors)

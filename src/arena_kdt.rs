@@ -169,7 +169,7 @@ impl<'a, A: Copy> ArenaKdtree<'a, A> {
                     dist: dist,
                     item: element.item,
                 };
-                let idx: usize = top_k.partition_point(|s| s <= &nb);
+                let idx: usize = top_k.partition_point(|s| s.dist <= dist);
                 if idx < top_k.len() {
                     if top_k.len() + 1 > k {
                         top_k.pop();
