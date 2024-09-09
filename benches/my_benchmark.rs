@@ -298,7 +298,18 @@ fn knn_queries_10d(c: &mut Criterion) {
             })
         },
     );
-
+    
+    c.bench_function(
+        &format!("Arkadia {} 10NN queries (10D), owned Tree", points.len()),
+        |b| {
+            b.iter(|| {
+                for rv in points.iter() {
+                    let _ = tree_owned.knn(k, rv.as_slice().unwrap(), 0f64);
+                }
+            })
+        },
+    );
+    
     c.bench_function(
         &format!("Arkadia {} 10NN queries (10D)", points.len()),
         |b| {
@@ -310,16 +321,6 @@ fn knn_queries_10d(c: &mut Criterion) {
         },
     );
 
-    c.bench_function(
-        &format!("Arkadia {} 10NN queries (10D), owned Tree", points.len()),
-        |b| {
-            b.iter(|| {
-                for rv in points.iter() {
-                    let _ = tree_owned.knn(k, rv.as_slice().unwrap(), 0f64);
-                }
-            })
-        },
-    );
 }
 
 fn knn_queries_60d(c: &mut Criterion) {
@@ -480,7 +481,7 @@ fn within_queries(c: &mut Criterion) {
 
     let binding = matrix.view();
     let mut leaf_elements = matrix_to_leaves(&binding, &values);
-    let mut leaf_elements = matrix_to_leaves(&binding, &values);
+    // let mut leaf_elements = matrix_to_leaves(&binding, &values);
     // For random uniform data, doesn't matter which method to choose
     let tree = KDT::from_leaves(&mut leaf_elements, DIST::SQL2).unwrap();
 
@@ -543,8 +544,6 @@ fn within_count_queries(c: &mut Criterion) {
 criterion_group!(
     benches,
     knn_queries_10d,
-    within_queries,
-    within_count_queries
     // knn_10d_tree_construction,
     // knn_queries_3d,
     // knn_queries_3d_2,
@@ -553,5 +552,7 @@ criterion_group!(
     // knn_queries_60d,
     // knn_queries_5d_linf,
     // knn_queries_10d_linf,
+    // within_queries,
+    // within_count_queries
 );
 criterion_main!(benches);

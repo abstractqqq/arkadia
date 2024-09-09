@@ -3,7 +3,7 @@ use crate::utils::SplitMethod;
 use super::{leaf::{KdLeaf, OwnedLeaf}, suggest_capacity, KNNRegressor, Leaf, SpacialQueries, NB};
 use cfavml::safe_trait_distance_ops::DistanceOps;
 use num::Float;
-use std::{fmt::Debug, ptr, usize};
+use std::{fmt::Debug, usize};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DIST<T: Float + 'static> {
@@ -59,8 +59,8 @@ impl<T: Float + DistanceOps + 'static> DIST<T> {
 
 
 pub struct KDT<'a, T: Float + DistanceOps + 'static + Debug, A:Copy> {
-    dim: usize,
-    capacity: usize,
+    pub dim: usize,
+    pub capacity: usize,
     // Nodes
     left: Option<Box<KDT<'a, T, A>>>,
     right: Option<Box<KDT<'a, T, A>>>,
@@ -400,14 +400,13 @@ impl<'a, T: Float + DistanceOps + 'static + Debug, A: Copy> KDT<'a, T, A> {
         }
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     fn update_top_k(&self, top_k: &mut Vec<NB<T, A>>, k: usize, point: &[T], current_max:T, max_dist_bound: T) {
-        let max_permissible_dist = max_dist_bound;
         // This is only called if is_leaf. Safe to unwrap.
-        let mut cur_max = current_max; 
+        let mut cur_max = current_max;
         for element in self.data.iter() {
             let dist = self.d.dist(element.row_vec, point);
-            if dist <= max_permissible_dist && (dist < cur_max || top_k.len() < k) {
+            if dist <= max_dist_bound && (dist < cur_max || top_k.len() < k) {
                 let idx = top_k.partition_point(|s| s.dist <= dist);
                 top_k.insert(idx,  NB {
                     dist: dist,
@@ -565,8 +564,8 @@ impl<'a, T: Float + DistanceOps + 'static + Debug + Into<f64>, A: Float + Into<f
 // Unfortunately, it looks like the code has to be doubled.
 
 pub struct OwnedKDT<T: Float + DistanceOps + 'static + Debug, A:Copy> {
-    dim: usize,
-    capacity: usize,
+    pub dim: usize,
+    pub capacity: usize,
     // Nodes
     left: Option<Box<OwnedKDT<T, A>>>,
     right: Option<Box<OwnedKDT<T, A>>>,
@@ -939,14 +938,13 @@ impl<T: Float + DistanceOps + 'static + Debug, A: Copy> OwnedKDT<T, A> {
         }
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     fn update_top_k(&self, top_k: &mut Vec<NB<T, A>>, k: usize, point: &[T], current_max:T, max_dist_bound: T) {
-        let max_permissible_dist = max_dist_bound;
         // This is only called if is_leaf. Safe to unwrap.
         let mut cur_max = current_max; 
         for element in self.data.iter() {
-            let dist = self.d.dist(&element.row_vec, point);
-            if dist <= max_permissible_dist && (dist < cur_max || top_k.len() < k) {
+            let dist = self.d.dist(element.vec(), point);
+            if dist <= max_dist_bound && (dist < cur_max || top_k.len() < k) {
                 let idx = top_k.partition_point(|s| s.dist <= dist);
                 top_k.insert(idx,  NB {
                     dist: dist,
