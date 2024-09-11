@@ -1,5 +1,4 @@
 use crate::leaf::{Leaf, OwnedLeaf};
-use ndarray::ArrayView2;
 use num::Float;
 
 #[derive(Clone, Default)]
@@ -33,58 +32,38 @@ pub fn suggest_capacity(dim: usize) -> usize {
     }
 }
 
-pub fn matrix_to_leaves<'a, T: Float + 'static, A: Copy>(
-    matrix: &'a ArrayView2<'a, T>,
+pub fn slice_to_leaves<'a, T: Float + 'static, A: Copy>(
+    slice: &'a [T],
+    row_len: usize,
     values: &'a [A],
 ) -> Vec<Leaf<'a, T, A>> {
     values
         .iter()
         .copied()
-        .zip(matrix.rows())
+        .zip(slice.chunks_exact(row_len))
         .map(|pair| pair.into())
-        .collect::<Vec<_>>()
+        .collect()
 }
 
-pub fn matrix_to_leaves_owned<'a, T: Float + 'static, A: Copy>(
-    matrix: &'a ArrayView2<'a, T>,
-    values: &'a [A],
+pub fn slice_to_owned_leaves<T: Float + 'static, A: Copy>(
+    slice: &[T],
+    row_len: usize,
+    values: &[A],
 ) -> Vec<OwnedLeaf<T, A>> {
     values
         .iter()
         .copied()
-        .zip(matrix.rows())
+        .zip(slice.chunks_exact(row_len))
         .map(|pair| pair.into())
-        .collect::<Vec<_>>()
+        .collect()
 }
 
-pub fn matrix_to_leaves_w_row_num<'a, T: Float + 'static>(
-    matrix: &'a ArrayView2<'a, T>,
-) -> Vec<Leaf<'a, T, usize>> {
-    matrix
-        .rows()
-        .into_iter()
-        .enumerate()
-        .map(|pair| pair.into())
-        .collect::<Vec<_>>()
-}
-
-pub fn matrix_to_leaves_w_row_num_owned<'a, T: Float + 'static>(
-    matrix: &'a ArrayView2<'a, T>,
-) -> Vec<OwnedLeaf<T, usize>> {
-    matrix
-        .rows()
-        .into_iter()
-        .enumerate()
-        .map(|pair| pair.into())
-        .collect::<Vec<_>>()
-}
-
-pub fn matrix_to_empty_leaves<'a, T: Float + 'static>(
-    matrix: &'a ArrayView2<'a, T>,
+pub fn slice_to_empty_leaves<'a, T: Float + 'static>(
+    slice: &'a [T],
+    row_len: usize,
 ) -> Vec<Leaf<'a, T, ()>> {
-    matrix
-        .rows()
-        .into_iter()
+    slice
+        .chunks_exact(row_len)
         .map(|row| ((), row).into())
-        .collect::<Vec<_>>()
+        .collect()
 }

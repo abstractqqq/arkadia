@@ -247,8 +247,7 @@ impl<'a, A: Copy> ArenaKdtree<'a, A> {
 mod tests {
     use crate::arena_kdt::ArenaKdtree;
     use crate::kdt::DIST;
-    use super::super::matrix_to_leaves;
-    use ndarray::{arr1, Array2, ArrayView1, ArrayView2};
+    use crate::{slice_to_leaves, suggest_capacity};
 
     pub fn squared_l2(a: &[f64], b: &[f64]) -> f64 {
         a.iter()
@@ -261,17 +260,18 @@ mod tests {
     }
 
     fn generate_test_answer(
-        mat: ArrayView2<f64>,
-        point: ArrayView1<f64>,
+        data: &[f64],
+        row_size: usize,
+        point: &[f64],
         dist_func: fn(&[f64], &[f64]) -> f64,
     ) -> (Vec<usize>, Vec<f64>) {
-        let mut ans_distances = mat
-            .rows()
-            .into_iter()
-            .map(|v| dist_func(v.to_slice().unwrap(), &point.to_vec()))
+        let mut ans_distances = data
+            .chunks_exact(row_size)
+            .map(|v| dist_func(v, point))
             .collect::<Vec<_>>();
 
-        let mut ans_argmins = (0..mat.nrows()).collect::<Vec<_>>();
+        let nrows = data.len() / row_size;
+        let mut ans_argmins = (0..nrows).collect::<Vec<_>>();
         ans_argmins.sort_by(|&i, &j| ans_distances[i].partial_cmp(&ans_distances[j]).unwrap());
         ans_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn test_10d_knn_l2_dist_arena_kdt() {
+    fn test_10d_knn_l2_dist() {
         // 10 nearest neighbors, matrix of size 1000 x 10
         let k = 10usize;
         let mut v = Vec::new();
@@ -288,19 +288,20 @@ mod tests {
             v.extend_from_slice(&random_10d_rows());
         }
 
-        let mat = Array2::from_shape_vec((rows, 10), v).unwrap();
-        let mat = mat.as_standard_layout().to_owned();
-        let point = arr1(&[0.5; 10]);
+        let point = [0.5; 10];
         // brute force test
-        let (ans_argmins, ans_distances) =
-            generate_test_answer(mat.view(), point.view(), squared_l2);
+        let (ans_argmins, ans_distances) = generate_test_answer(&v, 10, &point, squared_l2);
 
         let values = (0..rows).collect::<Vec<_>>();
-        let binding = mat.view();
-        let mut leaves = matrix_to_leaves(&binding, &values);
+        let mut leaves = slice_to_leaves(&v, 10, &values);
 
-        let tree = ArenaKdtree::from_leaves(&mut leaves, 10, 40, DIST::SQL2);
-        let output = tree.knn(k, point.as_slice().unwrap(), 0f64);
+        let tree = ArenaKdtree::from_leaves(
+            &mut leaves, 
+            10, 
+            suggest_capacity(10), 
+            DIST::SQL2);
+
+        let output = tree.knn(k, &point, 0f64);
 
         assert!(output.is_some());
         let output = output.unwrap();

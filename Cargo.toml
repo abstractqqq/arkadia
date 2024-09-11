@@ -6,14 +6,16 @@ edition = "2021"
 [dependencies]
 cfavml = {version="0.2.0", features = ["nightly"]}
 indextree = "4.7.2" # not really needed
-ndarray = "0.15.6"
 num = "0.4.3"
 rand = "*"
 serde = "1.0.206"
+simsimd = "5.1.2"
 
 [dev-dependencies]
 rand = "*"
+simsimd = "*"
 kdtree = "0.7.0"
+ndarray = "0.15.6"
 criterion = { version = "0.4", features = ["html_reports"] }
 
 [[bench]]
